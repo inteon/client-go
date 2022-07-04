@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsbatchv1 "k8s.io/client-go/applyconfigurations/batch/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeJobs) List(ctx context.Context, opts v1.ListOptions) (result *batch
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &batchv1.JobList{ListMeta: obj.(*batchv1.JobList).ListMeta}
+	list := &batchv1.JobList{
+		TypeMeta: obj.(*batchv1.JobList).TypeMeta,
+		ListMeta: obj.(*batchv1.JobList).ListMeta,
+	}
 	for _, item := range obj.(*batchv1.JobList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeJobs) List(ctx context.Context, opts v1.ListOptions) (result *batch
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested jobs.
-func (c *FakeJobs) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested jobs.
+func (c *FakeJobs) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(jobsResource, c.ns, opts))
 

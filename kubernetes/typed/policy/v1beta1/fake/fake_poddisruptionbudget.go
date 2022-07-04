@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	policyv1beta1 "k8s.io/client-go/applyconfigurations/policy/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakePodDisruptionBudgets) List(ctx context.Context, opts v1.ListOptions
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta1.PodDisruptionBudgetList{ListMeta: obj.(*v1beta1.PodDisruptionBudgetList).ListMeta}
+	list := &v1beta1.PodDisruptionBudgetList{
+		TypeMeta: obj.(*v1beta1.PodDisruptionBudgetList).TypeMeta,
+		ListMeta: obj.(*v1beta1.PodDisruptionBudgetList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta1.PodDisruptionBudgetList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakePodDisruptionBudgets) List(ctx context.Context, opts v1.ListOptions
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested podDisruptionBudgets.
-func (c *FakePodDisruptionBudgets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested podDisruptionBudgets.
+func (c *FakePodDisruptionBudgets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(poddisruptionbudgetsResource, c.ns, opts))
 

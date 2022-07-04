@@ -20,15 +20,14 @@ package v1alpha1
 
 import (
 	"context"
-	time "time"
 
 	storagev1alpha1 "k8s.io/api/storage/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	watch "k8s.io/apimachinery/pkg/watch"
 	internalinterfaces "k8s.io/client-go/informers/internalinterfaces"
 	kubernetes "k8s.io/client-go/kubernetes"
 	v1alpha1 "k8s.io/client-go/listers/storage/v1alpha1"
+	watch "k8s.io/client-go/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
@@ -48,37 +47,36 @@ type cSIStorageCapacityInformer struct {
 // NewCSIStorageCapacityInformer constructs a new informer for CSIStorageCapacity type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewCSIStorageCapacityInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCSIStorageCapacityInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewCSIStorageCapacityInformer(client kubernetes.Interface, namespace string, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredCSIStorageCapacityInformer(client, namespace, indexers, nil)
 }
 
 // NewFilteredCSIStorageCapacityInformer constructs a new informer for CSIStorageCapacity type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredCSIStorageCapacityInformer(client kubernetes.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredCSIStorageCapacityInformer(client kubernetes.Interface, namespace string, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.StorageV1alpha1().CSIStorageCapacities(namespace).List(context.TODO(), options)
+				return client.StorageV1alpha1().CSIStorageCapacities(namespace).List(ctx, options)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(ctx context.Context, options v1.ListOptions) (watch.Watcher, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.StorageV1alpha1().CSIStorageCapacities(namespace).Watch(context.TODO(), options)
+				return client.StorageV1alpha1().CSIStorageCapacities(namespace).Watch(ctx, options)
 			},
 		},
 		&storagev1alpha1.CSIStorageCapacity{},
-		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *cSIStorageCapacityInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCSIStorageCapacityInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *cSIStorageCapacityInformer) defaultInformer(client kubernetes.Interface) cache.SharedIndexInformer {
+	return NewFilteredCSIStorageCapacityInformer(client, f.namespace, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
 func (f *cSIStorageCapacityInformer) Informer() cache.SharedIndexInformer {

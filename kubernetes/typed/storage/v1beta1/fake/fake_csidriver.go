@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	storagev1beta1 "k8s.io/client-go/applyconfigurations/storage/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeCSIDrivers) List(ctx context.Context, opts v1.ListOptions) (result 
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta1.CSIDriverList{ListMeta: obj.(*v1beta1.CSIDriverList).ListMeta}
+	list := &v1beta1.CSIDriverList{
+		TypeMeta: obj.(*v1beta1.CSIDriverList).TypeMeta,
+		ListMeta: obj.(*v1beta1.CSIDriverList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta1.CSIDriverList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeCSIDrivers) List(ctx context.Context, opts v1.ListOptions) (result 
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested cSIDrivers.
-func (c *FakeCSIDrivers) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested cSIDrivers.
+func (c *FakeCSIDrivers) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(csidriversResource, opts))
 }

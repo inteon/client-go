@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsnetworkingv1 "k8s.io/client-go/applyconfigurations/networking/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeIngressClasses) List(ctx context.Context, opts v1.ListOptions) (res
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &networkingv1.IngressClassList{ListMeta: obj.(*networkingv1.IngressClassList).ListMeta}
+	list := &networkingv1.IngressClassList{
+		TypeMeta: obj.(*networkingv1.IngressClassList).TypeMeta,
+		ListMeta: obj.(*networkingv1.IngressClassList).ListMeta,
+	}
 	for _, item := range obj.(*networkingv1.IngressClassList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeIngressClasses) List(ctx context.Context, opts v1.ListOptions) (res
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested ingressClasses.
-func (c *FakeIngressClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested ingressClasses.
+func (c *FakeIngressClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(ingressclassesResource, opts))
 }

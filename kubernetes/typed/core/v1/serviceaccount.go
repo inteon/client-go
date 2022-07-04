@@ -28,9 +28,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -42,16 +41,16 @@ type ServiceAccountsGetter interface {
 
 // ServiceAccountInterface has methods to work with ServiceAccount resources.
 type ServiceAccountInterface interface {
-	Create(ctx context.Context, serviceAccount *v1.ServiceAccount, opts metav1.CreateOptions) (*v1.ServiceAccount, error)
-	Update(ctx context.Context, serviceAccount *v1.ServiceAccount, opts metav1.UpdateOptions) (*v1.ServiceAccount, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.ServiceAccount, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.ServiceAccountList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceAccount, err error)
-	Apply(ctx context.Context, serviceAccount *corev1.ServiceAccountApplyConfiguration, opts metav1.ApplyOptions) (result *v1.ServiceAccount, err error)
-	CreateToken(ctx context.Context, serviceAccountName string, tokenRequest *authenticationv1.TokenRequest, opts metav1.CreateOptions) (*authenticationv1.TokenRequest, error)
+	Create(ctx context.Context, serviceAccount *v1.ServiceAccount, options metav1.CreateOptions) (*v1.ServiceAccount, error)
+	Update(ctx context.Context, serviceAccount *v1.ServiceAccount, options metav1.UpdateOptions) (*v1.ServiceAccount, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.ServiceAccount, error)
+	List(ctx context.Context, options metav1.ListOptions) (*v1.ServiceAccountList, error)
+	Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.ServiceAccount, err error)
+	Apply(ctx context.Context, serviceAccount *corev1.ServiceAccountApplyConfiguration, options metav1.ApplyOptions) (result *v1.ServiceAccount, err error)
+	CreateToken(ctx context.Context, serviceAccountName string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (*authenticationv1.TokenRequest, error)
 
 	ServiceAccountExpansion
 }
@@ -74,122 +73,146 @@ func newServiceAccounts(c *CoreV1Client, namespace string) *serviceAccounts {
 func (c *serviceAccounts) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ServiceAccount, err error) {
 	result = &v1.ServiceAccount{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of ServiceAccounts that match those selectors.
-func (c *serviceAccounts) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ServiceAccountList, err error) {
+func (c *serviceAccounts) List(ctx context.Context, options metav1.ListOptions) (result *v1.ServiceAccountList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1.ServiceAccountList{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested serviceAccounts.
-func (c *serviceAccounts) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested serviceAccounts.
+func (c *serviceAccounts) Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("ServiceAccount").
 		Watch(ctx)
 }
 
 // Create takes the representation of a serviceAccount and creates it.  Returns the server's representation of the serviceAccount, and an error, if there is any.
-func (c *serviceAccounts) Create(ctx context.Context, serviceAccount *v1.ServiceAccount, opts metav1.CreateOptions) (result *v1.ServiceAccount, err error) {
+func (c *serviceAccounts) Create(ctx context.Context, serviceAccount *v1.ServiceAccount, options metav1.CreateOptions) (result *v1.ServiceAccount, err error) {
 	result = &v1.ServiceAccount{}
 	err = c.client.Post().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(serviceAccount).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a serviceAccount and updates it. Returns the server's representation of the serviceAccount, and an error, if there is any.
-func (c *serviceAccounts) Update(ctx context.Context, serviceAccount *v1.ServiceAccount, opts metav1.UpdateOptions) (result *v1.ServiceAccount, err error) {
+func (c *serviceAccounts) Update(ctx context.Context, serviceAccount *v1.ServiceAccount, options metav1.UpdateOptions) (result *v1.ServiceAccount, err error) {
 	result = &v1.ServiceAccount{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(serviceAccount.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(serviceAccount).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the serviceAccount and deletes it. Returns an error if one occurs.
-func (c *serviceAccounts) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *serviceAccounts) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *serviceAccounts) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *serviceAccounts) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched serviceAccount.
-func (c *serviceAccounts) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ServiceAccount, err error) {
+func (c *serviceAccounts) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.ServiceAccount, err error) {
 	result = &v1.ServiceAccount{}
 	err = c.client.Patch(pt).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied serviceAccount.
-func (c *serviceAccounts) Apply(ctx context.Context, serviceAccount *corev1.ServiceAccountApplyConfiguration, opts metav1.ApplyOptions) (result *v1.ServiceAccount, err error) {
+func (c *serviceAccounts) Apply(ctx context.Context, serviceAccount *corev1.ServiceAccountApplyConfiguration, options metav1.ApplyOptions) (result *v1.ServiceAccount, err error) {
 	if serviceAccount == nil {
 		return nil, fmt.Errorf("serviceAccount provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(serviceAccount)
 	if err != nil {
 		return nil, err
@@ -200,26 +223,32 @@ func (c *serviceAccounts) Apply(ctx context.Context, serviceAccount *corev1.Serv
 	}
 	result = &v1.ServiceAccount{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // CreateToken takes the representation of a tokenRequest and creates it.  Returns the server's representation of the tokenRequest, and an error, if there is any.
-func (c *serviceAccounts) CreateToken(ctx context.Context, serviceAccountName string, tokenRequest *authenticationv1.TokenRequest, opts metav1.CreateOptions) (result *authenticationv1.TokenRequest, err error) {
+func (c *serviceAccounts) CreateToken(ctx context.Context, serviceAccountName string, tokenRequest *authenticationv1.TokenRequest, options metav1.CreateOptions) (result *authenticationv1.TokenRequest, err error) {
 	result = &authenticationv1.TokenRequest{}
 	err = c.client.Post().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("serviceaccounts").
 		Name(serviceAccountName).
 		SubResource("token").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(tokenRequest).
+		ExpectKind("ServiceAccount").
 		Do(ctx).
 		Into(result)
 	return

@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsrbacv1 "k8s.io/client-go/applyconfigurations/rbac/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeRoleBindings) List(ctx context.Context, opts v1.ListOptions) (resul
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &rbacv1.RoleBindingList{ListMeta: obj.(*rbacv1.RoleBindingList).ListMeta}
+	list := &rbacv1.RoleBindingList{
+		TypeMeta: obj.(*rbacv1.RoleBindingList).TypeMeta,
+		ListMeta: obj.(*rbacv1.RoleBindingList).ListMeta,
+	}
 	for _, item := range obj.(*rbacv1.RoleBindingList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeRoleBindings) List(ctx context.Context, opts v1.ListOptions) (resul
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested roleBindings.
-func (c *FakeRoleBindings) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested roleBindings.
+func (c *FakeRoleBindings) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(rolebindingsResource, c.ns, opts))
 

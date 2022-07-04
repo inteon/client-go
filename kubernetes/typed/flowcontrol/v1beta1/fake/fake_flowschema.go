@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	flowcontrolv1beta1 "k8s.io/client-go/applyconfigurations/flowcontrol/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeFlowSchemas) List(ctx context.Context, opts v1.ListOptions) (result
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta1.FlowSchemaList{ListMeta: obj.(*v1beta1.FlowSchemaList).ListMeta}
+	list := &v1beta1.FlowSchemaList{
+		TypeMeta: obj.(*v1beta1.FlowSchemaList).TypeMeta,
+		ListMeta: obj.(*v1beta1.FlowSchemaList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta1.FlowSchemaList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeFlowSchemas) List(ctx context.Context, opts v1.ListOptions) (result
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested flowSchemas.
-func (c *FakeFlowSchemas) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested flowSchemas.
+func (c *FakeFlowSchemas) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(flowschemasResource, opts))
 }

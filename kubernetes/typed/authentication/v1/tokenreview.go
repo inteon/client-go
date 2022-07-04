@@ -23,7 +23,6 @@ import (
 
 	v1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -35,7 +34,7 @@ type TokenReviewsGetter interface {
 
 // TokenReviewInterface has methods to work with TokenReview resources.
 type TokenReviewInterface interface {
-	Create(ctx context.Context, tokenReview *v1.TokenReview, opts metav1.CreateOptions) (*v1.TokenReview, error)
+	Create(ctx context.Context, tokenReview *v1.TokenReview, options metav1.CreateOptions) (*v1.TokenReview, error)
 	TokenReviewExpansion
 }
 
@@ -52,12 +51,15 @@ func newTokenReviews(c *AuthenticationV1Client) *tokenReviews {
 }
 
 // Create takes the representation of a tokenReview and creates it.  Returns the server's representation of the tokenReview, and an error, if there is any.
-func (c *tokenReviews) Create(ctx context.Context, tokenReview *v1.TokenReview, opts metav1.CreateOptions) (result *v1.TokenReview, err error) {
+func (c *tokenReviews) Create(ctx context.Context, tokenReview *v1.TokenReview, options metav1.CreateOptions) (result *v1.TokenReview, err error) {
 	result = &v1.TokenReview{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("tokenreviews").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(tokenReview).
+		ExpectKind("TokenReview").
 		Do(ctx).
 		Into(result)
 	return

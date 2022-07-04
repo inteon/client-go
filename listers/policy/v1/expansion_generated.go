@@ -25,3 +25,11 @@ type EvictionListerExpansion interface{}
 // EvictionNamespaceListerExpansion allows custom methods to be added to
 // EvictionNamespaceLister.
 type EvictionNamespaceListerExpansion interface{}
+
+// PodDisruptionBudgetListerExpansion allows custom methods to be added to
+// PodDisruptionBudgetLister.
+type PodDisruptionBudgetListerExpansion interface{}
+
+// PodDisruptionBudgetNamespaceListerExpansion allows custom methods to be added to
+// PodDisruptionBudgetNamespaceLister.
+type PodDisruptionBudgetNamespaceListerExpansion interface{}

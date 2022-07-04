@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	appsv1beta2 "k8s.io/client-go/applyconfigurations/apps/v1beta2"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeStatefulSets) List(ctx context.Context, opts v1.ListOptions) (resul
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta2.StatefulSetList{ListMeta: obj.(*v1beta2.StatefulSetList).ListMeta}
+	list := &v1beta2.StatefulSetList{
+		TypeMeta: obj.(*v1beta2.StatefulSetList).TypeMeta,
+		ListMeta: obj.(*v1beta2.StatefulSetList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta2.StatefulSetList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeStatefulSets) List(ctx context.Context, opts v1.ListOptions) (resul
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested statefulSets.
-func (c *FakeStatefulSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested statefulSets.
+func (c *FakeStatefulSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(statefulsetsResource, c.ns, opts))
 

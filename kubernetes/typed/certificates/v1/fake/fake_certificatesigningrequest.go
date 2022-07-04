@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationscertificatesv1 "k8s.io/client-go/applyconfigurations/certificates/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeCertificateSigningRequests) List(ctx context.Context, opts v1.ListO
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &certificatesv1.CertificateSigningRequestList{ListMeta: obj.(*certificatesv1.CertificateSigningRequestList).ListMeta}
+	list := &certificatesv1.CertificateSigningRequestList{
+		TypeMeta: obj.(*certificatesv1.CertificateSigningRequestList).TypeMeta,
+		ListMeta: obj.(*certificatesv1.CertificateSigningRequestList).ListMeta,
+	}
 	for _, item := range obj.(*certificatesv1.CertificateSigningRequestList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeCertificateSigningRequests) List(ctx context.Context, opts v1.ListO
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested certificateSigningRequests.
-func (c *FakeCertificateSigningRequests) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested certificateSigningRequests.
+func (c *FakeCertificateSigningRequests) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(certificatesigningrequestsResource, opts))
 }

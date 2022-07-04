@@ -23,7 +23,6 @@ import (
 
 	v1beta1 "k8s.io/api/authorization/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -35,7 +34,7 @@ type SubjectAccessReviewsGetter interface {
 
 // SubjectAccessReviewInterface has methods to work with SubjectAccessReview resources.
 type SubjectAccessReviewInterface interface {
-	Create(ctx context.Context, subjectAccessReview *v1beta1.SubjectAccessReview, opts v1.CreateOptions) (*v1beta1.SubjectAccessReview, error)
+	Create(ctx context.Context, subjectAccessReview *v1beta1.SubjectAccessReview, options v1.CreateOptions) (*v1beta1.SubjectAccessReview, error)
 	SubjectAccessReviewExpansion
 }
 
@@ -52,12 +51,15 @@ func newSubjectAccessReviews(c *AuthorizationV1beta1Client) *subjectAccessReview
 }
 
 // Create takes the representation of a subjectAccessReview and creates it.  Returns the server's representation of the subjectAccessReview, and an error, if there is any.
-func (c *subjectAccessReviews) Create(ctx context.Context, subjectAccessReview *v1beta1.SubjectAccessReview, opts v1.CreateOptions) (result *v1beta1.SubjectAccessReview, err error) {
+func (c *subjectAccessReviews) Create(ctx context.Context, subjectAccessReview *v1beta1.SubjectAccessReview, options v1.CreateOptions) (result *v1beta1.SubjectAccessReview, err error) {
 	result = &v1beta1.SubjectAccessReview{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Resource("subjectaccessreviews").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(subjectAccessReview).
+		ExpectKind("SubjectAccessReview").
 		Do(ctx).
 		Into(result)
 	return

@@ -20,15 +20,14 @@ package v1
 
 import (
 	"context"
-	time "time"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	watch "k8s.io/apimachinery/pkg/watch"
 	internalinterfaces "k8s.io/client-go/informers/internalinterfaces"
 	kubernetes "k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/listers/certificates/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
@@ -47,37 +46,36 @@ type certificateSigningRequestInformer struct {
 // NewCertificateSigningRequestInformer constructs a new informer for CertificateSigningRequest type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewCertificateSigningRequestInformer(client kubernetes.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredCertificateSigningRequestInformer(client, resyncPeriod, indexers, nil)
+func NewCertificateSigningRequestInformer(client kubernetes.Interface, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredCertificateSigningRequestInformer(client, indexers, nil)
 }
 
 // NewFilteredCertificateSigningRequestInformer constructs a new informer for CertificateSigningRequest type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredCertificateSigningRequestInformer(client kubernetes.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredCertificateSigningRequestInformer(client kubernetes.Interface, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CertificatesV1().CertificateSigningRequests().List(context.TODO(), options)
+				return client.CertificatesV1().CertificateSigningRequests().List(ctx, options)
 			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CertificatesV1().CertificateSigningRequests().Watch(context.TODO(), options)
+				return client.CertificatesV1().CertificateSigningRequests().Watch(ctx, options)
 			},
 		},
 		&certificatesv1.CertificateSigningRequest{},
-		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *certificateSigningRequestInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredCertificateSigningRequestInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *certificateSigningRequestInformer) defaultInformer(client kubernetes.Interface) cache.SharedIndexInformer {
+	return NewFilteredCertificateSigningRequestInformer(client, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
 func (f *certificateSigningRequestInformer) Informer() cache.SharedIndexInformer {

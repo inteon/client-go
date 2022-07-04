@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationscorev1 "k8s.io/client-go/applyconfigurations/core/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakePersistentVolumes) List(ctx context.Context, opts v1.ListOptions) (
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &corev1.PersistentVolumeList{ListMeta: obj.(*corev1.PersistentVolumeList).ListMeta}
+	list := &corev1.PersistentVolumeList{
+		TypeMeta: obj.(*corev1.PersistentVolumeList).TypeMeta,
+		ListMeta: obj.(*corev1.PersistentVolumeList).ListMeta,
+	}
 	for _, item := range obj.(*corev1.PersistentVolumeList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakePersistentVolumes) List(ctx context.Context, opts v1.ListOptions) (
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested persistentVolumes.
-func (c *FakePersistentVolumes) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested persistentVolumes.
+func (c *FakePersistentVolumes) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(persistentvolumesResource, opts))
 }

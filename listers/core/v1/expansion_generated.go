@@ -90,6 +90,14 @@ type PodTemplateListerExpansion interface{}
 // PodTemplateNamespaceLister.
 type PodTemplateNamespaceListerExpansion interface{}
 
+// ReplicationControllerListerExpansion allows custom methods to be added to
+// ReplicationControllerLister.
+type ReplicationControllerListerExpansion interface{}
+
+// ReplicationControllerNamespaceListerExpansion allows custom methods to be added to
+// ReplicationControllerNamespaceLister.
+type ReplicationControllerNamespaceListerExpansion interface{}
+
 // ResourceQuotaListerExpansion allows custom methods to be added to
 // ResourceQuotaLister.
 type ResourceQuotaListerExpansion interface{}

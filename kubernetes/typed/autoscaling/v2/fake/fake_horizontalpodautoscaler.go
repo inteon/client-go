@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	autoscalingv2 "k8s.io/client-go/applyconfigurations/autoscaling/v2"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeHorizontalPodAutoscalers) List(ctx context.Context, opts v1.ListOpt
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v2.HorizontalPodAutoscalerList{ListMeta: obj.(*v2.HorizontalPodAutoscalerList).ListMeta}
+	list := &v2.HorizontalPodAutoscalerList{
+		TypeMeta: obj.(*v2.HorizontalPodAutoscalerList).TypeMeta,
+		ListMeta: obj.(*v2.HorizontalPodAutoscalerList).ListMeta,
+	}
 	for _, item := range obj.(*v2.HorizontalPodAutoscalerList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeHorizontalPodAutoscalers) List(ctx context.Context, opts v1.ListOpt
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested horizontalPodAutoscalers.
-func (c *FakeHorizontalPodAutoscalers) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested horizontalPodAutoscalers.
+func (c *FakeHorizontalPodAutoscalers) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(horizontalpodautoscalersResource, c.ns, opts))
 

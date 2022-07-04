@@ -20,15 +20,14 @@ package v1
 
 import (
 	"context"
-	time "time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	watch "k8s.io/apimachinery/pkg/watch"
 	internalinterfaces "k8s.io/client-go/informers/internalinterfaces"
 	kubernetes "k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/listers/core/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
@@ -47,37 +46,36 @@ type persistentVolumeInformer struct {
 // NewPersistentVolumeInformer constructs a new informer for PersistentVolume type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewPersistentVolumeInformer(client kubernetes.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredPersistentVolumeInformer(client, resyncPeriod, indexers, nil)
+func NewPersistentVolumeInformer(client kubernetes.Interface, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredPersistentVolumeInformer(client, indexers, nil)
 }
 
 // NewFilteredPersistentVolumeInformer constructs a new informer for PersistentVolume type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredPersistentVolumeInformer(client kubernetes.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredPersistentVolumeInformer(client kubernetes.Interface, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CoreV1().PersistentVolumes().List(context.TODO(), options)
+				return client.CoreV1().PersistentVolumes().List(ctx, options)
 			},
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.CoreV1().PersistentVolumes().Watch(context.TODO(), options)
+				return client.CoreV1().PersistentVolumes().Watch(ctx, options)
 			},
 		},
 		&corev1.PersistentVolume{},
-		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *persistentVolumeInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredPersistentVolumeInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *persistentVolumeInformer) defaultInformer(client kubernetes.Interface) cache.SharedIndexInformer {
+	return NewFilteredPersistentVolumeInformer(client, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
 func (f *persistentVolumeInformer) Informer() cache.SharedIndexInformer {

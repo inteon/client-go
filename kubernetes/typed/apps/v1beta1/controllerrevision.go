@@ -27,9 +27,8 @@ import (
 	v1beta1 "k8s.io/api/apps/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	appsv1beta1 "k8s.io/client-go/applyconfigurations/apps/v1beta1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,15 +40,15 @@ type ControllerRevisionsGetter interface {
 
 // ControllerRevisionInterface has methods to work with ControllerRevision resources.
 type ControllerRevisionInterface interface {
-	Create(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, opts v1.CreateOptions) (*v1beta1.ControllerRevision, error)
-	Update(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, opts v1.UpdateOptions) (*v1beta1.ControllerRevision, error)
-	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
-	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1beta1.ControllerRevision, error)
-	List(ctx context.Context, opts v1.ListOptions) (*v1beta1.ControllerRevisionList, error)
-	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.ControllerRevision, err error)
-	Apply(ctx context.Context, controllerRevision *appsv1beta1.ControllerRevisionApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.ControllerRevision, err error)
+	Create(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, options v1.CreateOptions) (*v1beta1.ControllerRevision, error)
+	Update(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, options v1.UpdateOptions) (*v1beta1.ControllerRevision, error)
+	Delete(ctx context.Context, name string, options v1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error
+	Get(ctx context.Context, name string, options v1.GetOptions) (*v1beta1.ControllerRevision, error)
+	List(ctx context.Context, options v1.ListOptions) (*v1beta1.ControllerRevisionList, error)
+	Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta1.ControllerRevision, err error)
+	Apply(ctx context.Context, controllerRevision *appsv1beta1.ControllerRevisionApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.ControllerRevision, err error)
 	ControllerRevisionExpansion
 }
 
@@ -71,122 +70,146 @@ func newControllerRevisions(c *AppsV1beta1Client, namespace string) *controllerR
 func (c *controllerRevisions) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.ControllerRevision, err error) {
 	result = &v1beta1.ControllerRevision{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of ControllerRevisions that match those selectors.
-func (c *controllerRevisions) List(ctx context.Context, opts v1.ListOptions) (result *v1beta1.ControllerRevisionList, err error) {
+func (c *controllerRevisions) List(ctx context.Context, options v1.ListOptions) (result *v1beta1.ControllerRevisionList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1beta1.ControllerRevisionList{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested controllerRevisions.
-func (c *controllerRevisions) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested controllerRevisions.
+func (c *controllerRevisions) Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("ControllerRevision").
 		Watch(ctx)
 }
 
 // Create takes the representation of a controllerRevision and creates it.  Returns the server's representation of the controllerRevision, and an error, if there is any.
-func (c *controllerRevisions) Create(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, opts v1.CreateOptions) (result *v1beta1.ControllerRevision, err error) {
+func (c *controllerRevisions) Create(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, options v1.CreateOptions) (result *v1beta1.ControllerRevision, err error) {
 	result = &v1beta1.ControllerRevision{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(controllerRevision).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a controllerRevision and updates it. Returns the server's representation of the controllerRevision, and an error, if there is any.
-func (c *controllerRevisions) Update(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, opts v1.UpdateOptions) (result *v1beta1.ControllerRevision, err error) {
+func (c *controllerRevisions) Update(ctx context.Context, controllerRevision *v1beta1.ControllerRevision, options v1.UpdateOptions) (result *v1beta1.ControllerRevision, err error) {
 	result = &v1beta1.ControllerRevision{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
 		Name(controllerRevision.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(controllerRevision).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the controllerRevision and deletes it. Returns an error if one occurs.
-func (c *controllerRevisions) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
+func (c *controllerRevisions) Delete(ctx context.Context, name string, options v1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *controllerRevisions) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
+func (c *controllerRevisions) DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched controllerRevision.
-func (c *controllerRevisions) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.ControllerRevision, err error) {
+func (c *controllerRevisions) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta1.ControllerRevision, err error) {
 	result = &v1beta1.ControllerRevision{}
 	err = c.client.Patch(pt).
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied controllerRevision.
-func (c *controllerRevisions) Apply(ctx context.Context, controllerRevision *appsv1beta1.ControllerRevisionApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.ControllerRevision, err error) {
+func (c *controllerRevisions) Apply(ctx context.Context, controllerRevision *appsv1beta1.ControllerRevisionApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.ControllerRevision, err error) {
 	if controllerRevision == nil {
 		return nil, fmt.Errorf("controllerRevision provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(controllerRevision)
 	if err != nil {
 		return nil, err
@@ -197,11 +220,14 @@ func (c *controllerRevisions) Apply(ctx context.Context, controllerRevision *app
 	}
 	result = &v1beta1.ControllerRevision{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("controllerrevisions").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("ControllerRevision").
 		Do(ctx).
 		Into(result)
 	return

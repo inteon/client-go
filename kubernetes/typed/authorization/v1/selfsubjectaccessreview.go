@@ -23,7 +23,6 @@ import (
 
 	v1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -35,7 +34,7 @@ type SelfSubjectAccessReviewsGetter interface {
 
 // SelfSubjectAccessReviewInterface has methods to work with SelfSubjectAccessReview resources.
 type SelfSubjectAccessReviewInterface interface {
-	Create(ctx context.Context, selfSubjectAccessReview *v1.SelfSubjectAccessReview, opts metav1.CreateOptions) (*v1.SelfSubjectAccessReview, error)
+	Create(ctx context.Context, selfSubjectAccessReview *v1.SelfSubjectAccessReview, options metav1.CreateOptions) (*v1.SelfSubjectAccessReview, error)
 	SelfSubjectAccessReviewExpansion
 }
 
@@ -52,12 +51,15 @@ func newSelfSubjectAccessReviews(c *AuthorizationV1Client) *selfSubjectAccessRev
 }
 
 // Create takes the representation of a selfSubjectAccessReview and creates it.  Returns the server's representation of the selfSubjectAccessReview, and an error, if there is any.
-func (c *selfSubjectAccessReviews) Create(ctx context.Context, selfSubjectAccessReview *v1.SelfSubjectAccessReview, opts metav1.CreateOptions) (result *v1.SelfSubjectAccessReview, err error) {
+func (c *selfSubjectAccessReviews) Create(ctx context.Context, selfSubjectAccessReview *v1.SelfSubjectAccessReview, options metav1.CreateOptions) (result *v1.SelfSubjectAccessReview, err error) {
 	result = &v1.SelfSubjectAccessReview{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("selfsubjectaccessreviews").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(selfSubjectAccessReview).
+		ExpectKind("SelfSubjectAccessReview").
 		Do(ctx).
 		Into(result)
 	return

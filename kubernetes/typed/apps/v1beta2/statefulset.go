@@ -27,9 +27,8 @@ import (
 	v1beta2 "k8s.io/api/apps/v1beta2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	appsv1beta2 "k8s.io/client-go/applyconfigurations/apps/v1beta2"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,20 +40,20 @@ type StatefulSetsGetter interface {
 
 // StatefulSetInterface has methods to work with StatefulSet resources.
 type StatefulSetInterface interface {
-	Create(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.CreateOptions) (*v1beta2.StatefulSet, error)
-	Update(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.UpdateOptions) (*v1beta2.StatefulSet, error)
-	UpdateStatus(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.UpdateOptions) (*v1beta2.StatefulSet, error)
-	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
-	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1beta2.StatefulSet, error)
-	List(ctx context.Context, opts v1.ListOptions) (*v1beta2.StatefulSetList, error)
-	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta2.StatefulSet, err error)
-	Apply(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, opts v1.ApplyOptions) (result *v1beta2.StatefulSet, err error)
-	ApplyStatus(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, opts v1.ApplyOptions) (result *v1beta2.StatefulSet, err error)
+	Create(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.CreateOptions) (*v1beta2.StatefulSet, error)
+	Update(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.UpdateOptions) (*v1beta2.StatefulSet, error)
+	UpdateStatus(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.UpdateOptions) (*v1beta2.StatefulSet, error)
+	Delete(ctx context.Context, name string, options v1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error
+	Get(ctx context.Context, name string, options v1.GetOptions) (*v1beta2.StatefulSet, error)
+	List(ctx context.Context, options v1.ListOptions) (*v1beta2.StatefulSetList, error)
+	Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta2.StatefulSet, err error)
+	Apply(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, options v1.ApplyOptions) (result *v1beta2.StatefulSet, err error)
+	ApplyStatus(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, options v1.ApplyOptions) (result *v1beta2.StatefulSet, err error)
 	GetScale(ctx context.Context, statefulSetName string, options v1.GetOptions) (*v1beta2.Scale, error)
-	UpdateScale(ctx context.Context, statefulSetName string, scale *v1beta2.Scale, opts v1.UpdateOptions) (*v1beta2.Scale, error)
-	ApplyScale(ctx context.Context, statefulSetName string, scale *appsv1beta2.ScaleApplyConfiguration, opts v1.ApplyOptions) (*v1beta2.Scale, error)
+	UpdateScale(ctx context.Context, statefulSetName string, scale *v1beta2.Scale, options v1.UpdateOptions) (*v1beta2.Scale, error)
+	ApplyScale(ctx context.Context, statefulSetName string, scale *appsv1beta2.ScaleApplyConfiguration, options v1.ApplyOptions) (*v1beta2.Scale, error)
 
 	StatefulSetExpansion
 }
@@ -77,69 +76,84 @@ func newStatefulSets(c *AppsV1beta2Client, namespace string) *statefulSets {
 func (c *statefulSets) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta2.StatefulSet, err error) {
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of StatefulSets that match those selectors.
-func (c *statefulSets) List(ctx context.Context, opts v1.ListOptions) (result *v1beta2.StatefulSetList, err error) {
+func (c *statefulSets) List(ctx context.Context, options v1.ListOptions) (result *v1beta2.StatefulSetList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1beta2.StatefulSetList{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested statefulSets.
-func (c *statefulSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested statefulSets.
+func (c *statefulSets) Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("StatefulSet").
 		Watch(ctx)
 }
 
 // Create takes the representation of a statefulSet and creates it.  Returns the server's representation of the statefulSet, and an error, if there is any.
-func (c *statefulSets) Create(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.CreateOptions) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) Create(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.CreateOptions) (result *v1beta2.StatefulSet, err error) {
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(statefulSet).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a statefulSet and updates it. Returns the server's representation of the statefulSet, and an error, if there is any.
-func (c *statefulSets) Update(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.UpdateOptions) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) Update(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.UpdateOptions) (result *v1beta2.StatefulSet, err error) {
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(statefulSet.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(statefulSet).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
@@ -147,68 +161,80 @@ func (c *statefulSets) Update(ctx context.Context, statefulSet *v1beta2.Stateful
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *statefulSets) UpdateStatus(ctx context.Context, statefulSet *v1beta2.StatefulSet, opts v1.UpdateOptions) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) UpdateStatus(ctx context.Context, statefulSet *v1beta2.StatefulSet, options v1.UpdateOptions) (result *v1beta2.StatefulSet, err error) {
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(statefulSet.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(statefulSet).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the statefulSet and deletes it. Returns an error if one occurs.
-func (c *statefulSets) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
+func (c *statefulSets) Delete(ctx context.Context, name string, options v1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *statefulSets) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
+func (c *statefulSets) DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched statefulSet.
-func (c *statefulSets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta2.StatefulSet, err error) {
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Patch(pt).
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied statefulSet.
-func (c *statefulSets) Apply(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, opts v1.ApplyOptions) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) Apply(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, options v1.ApplyOptions) (result *v1beta2.StatefulSet, err error) {
 	if statefulSet == nil {
 		return nil, fmt.Errorf("statefulSet provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(statefulSet)
 	if err != nil {
 		return nil, err
@@ -219,11 +245,14 @@ func (c *statefulSets) Apply(ctx context.Context, statefulSet *appsv1beta2.State
 	}
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
@@ -231,11 +260,11 @@ func (c *statefulSets) Apply(ctx context.Context, statefulSet *appsv1beta2.State
 
 // ApplyStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *statefulSets) ApplyStatus(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, opts v1.ApplyOptions) (result *v1beta2.StatefulSet, err error) {
+func (c *statefulSets) ApplyStatus(ctx context.Context, statefulSet *appsv1beta2.StatefulSetApplyConfiguration, options v1.ApplyOptions) (result *v1beta2.StatefulSet, err error) {
 	if statefulSet == nil {
 		return nil, fmt.Errorf("statefulSet provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(statefulSet)
 	if err != nil {
 		return nil, err
@@ -248,12 +277,15 @@ func (c *statefulSets) ApplyStatus(ctx context.Context, statefulSet *appsv1beta2
 
 	result = &v1beta2.StatefulSet{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(*name).
 		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
@@ -263,26 +295,32 @@ func (c *statefulSets) ApplyStatus(ctx context.Context, statefulSet *appsv1beta2
 func (c *statefulSets) GetScale(ctx context.Context, statefulSetName string, options v1.GetOptions) (result *v1beta2.Scale, err error) {
 	result = &v1beta2.Scale{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(statefulSetName).
 		SubResource("scale").
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // UpdateScale takes the top resource name and the representation of a scale and updates it. Returns the server's representation of the scale, and an error, if there is any.
-func (c *statefulSets) UpdateScale(ctx context.Context, statefulSetName string, scale *v1beta2.Scale, opts v1.UpdateOptions) (result *v1beta2.Scale, err error) {
+func (c *statefulSets) UpdateScale(ctx context.Context, statefulSetName string, scale *v1beta2.Scale, options v1.UpdateOptions) (result *v1beta2.Scale, err error) {
 	result = &v1beta2.Scale{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(statefulSetName).
 		SubResource("scale").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(scale).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return
@@ -290,11 +328,11 @@ func (c *statefulSets) UpdateScale(ctx context.Context, statefulSetName string, 
 
 // ApplyScale takes top resource name and the apply declarative configuration for scale,
 // applies it and returns the applied scale, and an error, if there is any.
-func (c *statefulSets) ApplyScale(ctx context.Context, statefulSetName string, scale *appsv1beta2.ScaleApplyConfiguration, opts v1.ApplyOptions) (result *v1beta2.Scale, err error) {
+func (c *statefulSets) ApplyScale(ctx context.Context, statefulSetName string, scale *appsv1beta2.ScaleApplyConfiguration, options v1.ApplyOptions) (result *v1beta2.Scale, err error) {
 	if scale == nil {
 		return nil, fmt.Errorf("scale provided to ApplyScale must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(scale)
 	if err != nil {
 		return nil, err
@@ -302,12 +340,15 @@ func (c *statefulSets) ApplyScale(ctx context.Context, statefulSetName string, s
 
 	result = &v1beta2.Scale{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta2.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("statefulsets").
 		Name(statefulSetName).
 		SubResource("scale").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("StatefulSet").
 		Do(ctx).
 		Into(result)
 	return

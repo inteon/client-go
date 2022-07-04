@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsschedulingv1 "k8s.io/client-go/applyconfigurations/scheduling/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakePriorityClasses) List(ctx context.Context, opts v1.ListOptions) (re
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &schedulingv1.PriorityClassList{ListMeta: obj.(*schedulingv1.PriorityClassList).ListMeta}
+	list := &schedulingv1.PriorityClassList{
+		TypeMeta: obj.(*schedulingv1.PriorityClassList).TypeMeta,
+		ListMeta: obj.(*schedulingv1.PriorityClassList).ListMeta,
+	}
 	for _, item := range obj.(*schedulingv1.PriorityClassList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakePriorityClasses) List(ctx context.Context, opts v1.ListOptions) (re
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested priorityClasses.
-func (c *FakePriorityClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested priorityClasses.
+func (c *FakePriorityClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(priorityclassesResource, opts))
 }

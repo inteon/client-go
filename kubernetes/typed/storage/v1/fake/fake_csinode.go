@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsstoragev1 "k8s.io/client-go/applyconfigurations/storage/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeCSINodes) List(ctx context.Context, opts v1.ListOptions) (result *s
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &storagev1.CSINodeList{ListMeta: obj.(*storagev1.CSINodeList).ListMeta}
+	list := &storagev1.CSINodeList{
+		TypeMeta: obj.(*storagev1.CSINodeList).TypeMeta,
+		ListMeta: obj.(*storagev1.CSINodeList).ListMeta,
+	}
 	for _, item := range obj.(*storagev1.CSINodeList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeCSINodes) List(ctx context.Context, opts v1.ListOptions) (result *s
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested cSINodes.
-func (c *FakeCSINodes) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested cSINodes.
+func (c *FakeCSINodes) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(csinodesResource, opts))
 }

@@ -27,9 +27,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,16 +40,16 @@ type ServicesGetter interface {
 
 // ServiceInterface has methods to work with Service resources.
 type ServiceInterface interface {
-	Create(ctx context.Context, service *v1.Service, opts metav1.CreateOptions) (*v1.Service, error)
-	Update(ctx context.Context, service *v1.Service, opts metav1.UpdateOptions) (*v1.Service, error)
-	UpdateStatus(ctx context.Context, service *v1.Service, opts metav1.UpdateOptions) (*v1.Service, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.Service, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.ServiceList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Service, err error)
-	Apply(ctx context.Context, service *corev1.ServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Service, err error)
-	ApplyStatus(ctx context.Context, service *corev1.ServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Service, err error)
+	Create(ctx context.Context, service *v1.Service, options metav1.CreateOptions) (*v1.Service, error)
+	Update(ctx context.Context, service *v1.Service, options metav1.UpdateOptions) (*v1.Service, error)
+	UpdateStatus(ctx context.Context, service *v1.Service, options metav1.UpdateOptions) (*v1.Service, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Service, error)
+	List(ctx context.Context, options metav1.ListOptions) (*v1.ServiceList, error)
+	Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.Service, err error)
+	Apply(ctx context.Context, service *corev1.ServiceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Service, err error)
+	ApplyStatus(ctx context.Context, service *corev1.ServiceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Service, err error)
 	ServiceExpansion
 }
 
@@ -72,69 +71,84 @@ func newServices(c *CoreV1Client, namespace string) *services {
 func (c *services) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Service, err error) {
 	result = &v1.Service{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of Services that match those selectors.
-func (c *services) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ServiceList, err error) {
+func (c *services) List(ctx context.Context, options metav1.ListOptions) (result *v1.ServiceList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1.ServiceList{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested services.
-func (c *services) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested services.
+func (c *services) Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Service").
 		Watch(ctx)
 }
 
 // Create takes the representation of a service and creates it.  Returns the server's representation of the service, and an error, if there is any.
-func (c *services) Create(ctx context.Context, service *v1.Service, opts metav1.CreateOptions) (result *v1.Service, err error) {
+func (c *services) Create(ctx context.Context, service *v1.Service, options metav1.CreateOptions) (result *v1.Service, err error) {
 	result = &v1.Service{}
 	err = c.client.Post().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(service).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a service and updates it. Returns the server's representation of the service, and an error, if there is any.
-func (c *services) Update(ctx context.Context, service *v1.Service, opts metav1.UpdateOptions) (result *v1.Service, err error) {
+func (c *services) Update(ctx context.Context, service *v1.Service, options metav1.UpdateOptions) (result *v1.Service, err error) {
 	result = &v1.Service{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(service.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(service).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
@@ -142,52 +156,61 @@ func (c *services) Update(ctx context.Context, service *v1.Service, opts metav1.
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *services) UpdateStatus(ctx context.Context, service *v1.Service, opts metav1.UpdateOptions) (result *v1.Service, err error) {
+func (c *services) UpdateStatus(ctx context.Context, service *v1.Service, options metav1.UpdateOptions) (result *v1.Service, err error) {
 	result = &v1.Service{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(service.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(service).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the service and deletes it. Returns an error if one occurs.
-func (c *services) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *services) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("Service").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched service.
-func (c *services) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Service, err error) {
+func (c *services) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.Service, err error) {
 	result = &v1.Service{}
 	err = c.client.Patch(pt).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied service.
-func (c *services) Apply(ctx context.Context, service *corev1.ServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Service, err error) {
+func (c *services) Apply(ctx context.Context, service *corev1.ServiceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Service, err error) {
 	if service == nil {
 		return nil, fmt.Errorf("service provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(service)
 	if err != nil {
 		return nil, err
@@ -198,11 +221,14 @@ func (c *services) Apply(ctx context.Context, service *corev1.ServiceApplyConfig
 	}
 	result = &v1.Service{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return
@@ -210,11 +236,11 @@ func (c *services) Apply(ctx context.Context, service *corev1.ServiceApplyConfig
 
 // ApplyStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *services) ApplyStatus(ctx context.Context, service *corev1.ServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Service, err error) {
+func (c *services) ApplyStatus(ctx context.Context, service *corev1.ServiceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Service, err error) {
 	if service == nil {
 		return nil, fmt.Errorf("service provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(service)
 	if err != nil {
 		return nil, err
@@ -227,12 +253,15 @@ func (c *services) ApplyStatus(ctx context.Context, service *corev1.ServiceApply
 
 	result = &v1.Service{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("services").
 		Name(*name).
 		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Service").
 		Do(ctx).
 		Into(result)
 	return

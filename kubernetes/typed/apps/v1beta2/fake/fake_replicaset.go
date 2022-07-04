@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	appsv1beta2 "k8s.io/client-go/applyconfigurations/apps/v1beta2"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeReplicaSets) List(ctx context.Context, opts v1.ListOptions) (result
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta2.ReplicaSetList{ListMeta: obj.(*v1beta2.ReplicaSetList).ListMeta}
+	list := &v1beta2.ReplicaSetList{
+		TypeMeta: obj.(*v1beta2.ReplicaSetList).TypeMeta,
+		ListMeta: obj.(*v1beta2.ReplicaSetList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta2.ReplicaSetList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeReplicaSets) List(ctx context.Context, opts v1.ListOptions) (result
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested replicaSets.
-func (c *FakeReplicaSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested replicaSets.
+func (c *FakeReplicaSets) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(replicasetsResource, c.ns, opts))
 

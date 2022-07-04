@@ -19,6 +19,8 @@ limitations under the License.
 package fake
 
 import (
+	admissionv1 "k8s.io/api/admission/v1"
+	admissionv1beta1 "k8s.io/api/admission/v1beta1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	admissionregistrationv1beta1 "k8s.io/api/admissionregistration/v1beta1"
 	internalv1alpha1 "k8s.io/api/apiserverinternal/v1alpha1"
@@ -48,6 +50,7 @@ import (
 	flowcontrolv1alpha1 "k8s.io/api/flowcontrol/v1alpha1"
 	flowcontrolv1beta1 "k8s.io/api/flowcontrol/v1beta1"
 	flowcontrolv1beta2 "k8s.io/api/flowcontrol/v1beta2"
+	imagepolicyv1alpha1 "k8s.io/api/imagepolicy/v1alpha1"
 	networkingv1 "k8s.io/api/networking/v1"
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	nodev1 "k8s.io/api/node/v1"
@@ -67,14 +70,11 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
-	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 )
 
-var scheme = runtime.NewScheme()
-var codecs = serializer.NewCodecFactory(scheme)
-
 var localSchemeBuilder = runtime.SchemeBuilder{
+	admissionv1.AddToScheme,
+	admissionv1beta1.AddToScheme,
 	admissionregistrationv1.AddToScheme,
 	admissionregistrationv1beta1.AddToScheme,
 	internalv1alpha1.AddToScheme,
@@ -93,8 +93,8 @@ var localSchemeBuilder = runtime.SchemeBuilder{
 	batchv1beta1.AddToScheme,
 	certificatesv1.AddToScheme,
 	certificatesv1beta1.AddToScheme,
-	coordinationv1beta1.AddToScheme,
 	coordinationv1.AddToScheme,
+	coordinationv1beta1.AddToScheme,
 	corev1.AddToScheme,
 	discoveryv1.AddToScheme,
 	discoveryv1beta1.AddToScheme,
@@ -104,6 +104,7 @@ var localSchemeBuilder = runtime.SchemeBuilder{
 	flowcontrolv1alpha1.AddToScheme,
 	flowcontrolv1beta1.AddToScheme,
 	flowcontrolv1beta2.AddToScheme,
+	imagepolicyv1alpha1.AddToScheme,
 	networkingv1.AddToScheme,
 	networkingv1beta1.AddToScheme,
 	nodev1.AddToScheme,
@@ -112,14 +113,18 @@ var localSchemeBuilder = runtime.SchemeBuilder{
 	policyv1.AddToScheme,
 	policyv1beta1.AddToScheme,
 	rbacv1.AddToScheme,
-	rbacv1beta1.AddToScheme,
 	rbacv1alpha1.AddToScheme,
+	rbacv1beta1.AddToScheme,
+	schedulingv1.AddToScheme,
 	schedulingv1alpha1.AddToScheme,
 	schedulingv1beta1.AddToScheme,
-	schedulingv1.AddToScheme,
-	storagev1beta1.AddToScheme,
 	storagev1.AddToScheme,
 	storagev1alpha1.AddToScheme,
+	storagev1beta1.AddToScheme,
+	func(s *runtime.Scheme) error {
+		v1.AddToGroupVersion(s, schema.GroupVersion{Version: "v1"})
+		return nil
+	},
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition
@@ -137,8 +142,3 @@ var localSchemeBuilder = runtime.SchemeBuilder{
 // After this, RawExtensions in Kubernetes types will serialize kube-aggregator types
 // correctly.
 var AddToScheme = localSchemeBuilder.AddToScheme
-
-func init() {
-	v1.AddToGroupVersion(scheme, schema.GroupVersion{Version: "v1"})
-	utilruntime.Must(AddToScheme(scheme))
-}

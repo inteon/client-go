@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	eventsv1beta1 "k8s.io/client-go/applyconfigurations/events/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeEvents) List(ctx context.Context, opts v1.ListOptions) (result *v1b
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta1.EventList{ListMeta: obj.(*v1beta1.EventList).ListMeta}
+	list := &v1beta1.EventList{
+		TypeMeta: obj.(*v1beta1.EventList).TypeMeta,
+		ListMeta: obj.(*v1beta1.EventList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta1.EventList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeEvents) List(ctx context.Context, opts v1.ListOptions) (result *v1b
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested events.
-func (c *FakeEvents) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested events.
+func (c *FakeEvents) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(eventsResource, c.ns, opts))
 

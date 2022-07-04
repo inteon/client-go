@@ -27,9 +27,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,15 +40,15 @@ type LimitRangesGetter interface {
 
 // LimitRangeInterface has methods to work with LimitRange resources.
 type LimitRangeInterface interface {
-	Create(ctx context.Context, limitRange *v1.LimitRange, opts metav1.CreateOptions) (*v1.LimitRange, error)
-	Update(ctx context.Context, limitRange *v1.LimitRange, opts metav1.UpdateOptions) (*v1.LimitRange, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.LimitRange, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.LimitRangeList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.LimitRange, err error)
-	Apply(ctx context.Context, limitRange *corev1.LimitRangeApplyConfiguration, opts metav1.ApplyOptions) (result *v1.LimitRange, err error)
+	Create(ctx context.Context, limitRange *v1.LimitRange, options metav1.CreateOptions) (*v1.LimitRange, error)
+	Update(ctx context.Context, limitRange *v1.LimitRange, options metav1.UpdateOptions) (*v1.LimitRange, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.LimitRange, error)
+	List(ctx context.Context, options metav1.ListOptions) (*v1.LimitRangeList, error)
+	Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.LimitRange, err error)
+	Apply(ctx context.Context, limitRange *corev1.LimitRangeApplyConfiguration, options metav1.ApplyOptions) (result *v1.LimitRange, err error)
 	LimitRangeExpansion
 }
 
@@ -71,122 +70,146 @@ func newLimitRanges(c *CoreV1Client, namespace string) *limitRanges {
 func (c *limitRanges) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.LimitRange, err error) {
 	result = &v1.LimitRange{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of LimitRanges that match those selectors.
-func (c *limitRanges) List(ctx context.Context, opts metav1.ListOptions) (result *v1.LimitRangeList, err error) {
+func (c *limitRanges) List(ctx context.Context, options metav1.ListOptions) (result *v1.LimitRangeList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1.LimitRangeList{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested limitRanges.
-func (c *limitRanges) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested limitRanges.
+func (c *limitRanges) Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("LimitRange").
 		Watch(ctx)
 }
 
 // Create takes the representation of a limitRange and creates it.  Returns the server's representation of the limitRange, and an error, if there is any.
-func (c *limitRanges) Create(ctx context.Context, limitRange *v1.LimitRange, opts metav1.CreateOptions) (result *v1.LimitRange, err error) {
+func (c *limitRanges) Create(ctx context.Context, limitRange *v1.LimitRange, options metav1.CreateOptions) (result *v1.LimitRange, err error) {
 	result = &v1.LimitRange{}
 	err = c.client.Post().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(limitRange).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a limitRange and updates it. Returns the server's representation of the limitRange, and an error, if there is any.
-func (c *limitRanges) Update(ctx context.Context, limitRange *v1.LimitRange, opts metav1.UpdateOptions) (result *v1.LimitRange, err error) {
+func (c *limitRanges) Update(ctx context.Context, limitRange *v1.LimitRange, options metav1.UpdateOptions) (result *v1.LimitRange, err error) {
 	result = &v1.LimitRange{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
 		Name(limitRange.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(limitRange).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the limitRange and deletes it. Returns an error if one occurs.
-func (c *limitRanges) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *limitRanges) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *limitRanges) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *limitRanges) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched limitRange.
-func (c *limitRanges) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.LimitRange, err error) {
+func (c *limitRanges) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.LimitRange, err error) {
 	result = &v1.LimitRange{}
 	err = c.client.Patch(pt).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied limitRange.
-func (c *limitRanges) Apply(ctx context.Context, limitRange *corev1.LimitRangeApplyConfiguration, opts metav1.ApplyOptions) (result *v1.LimitRange, err error) {
+func (c *limitRanges) Apply(ctx context.Context, limitRange *corev1.LimitRangeApplyConfiguration, options metav1.ApplyOptions) (result *v1.LimitRange, err error) {
 	if limitRange == nil {
 		return nil, fmt.Errorf("limitRange provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(limitRange)
 	if err != nil {
 		return nil, err
@@ -197,11 +220,14 @@ func (c *limitRanges) Apply(ctx context.Context, limitRange *corev1.LimitRangeAp
 	}
 	result = &v1.LimitRange{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("limitranges").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("LimitRange").
 		Do(ctx).
 		Into(result)
 	return

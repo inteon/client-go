@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationscoordinationv1 "k8s.io/client-go/applyconfigurations/coordination/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeLeases) List(ctx context.Context, opts v1.ListOptions) (result *coo
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &coordinationv1.LeaseList{ListMeta: obj.(*coordinationv1.LeaseList).ListMeta}
+	list := &coordinationv1.LeaseList{
+		TypeMeta: obj.(*coordinationv1.LeaseList).TypeMeta,
+		ListMeta: obj.(*coordinationv1.LeaseList).ListMeta,
+	}
 	for _, item := range obj.(*coordinationv1.LeaseList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeLeases) List(ctx context.Context, opts v1.ListOptions) (result *coo
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested leases.
-func (c *FakeLeases) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested leases.
+func (c *FakeLeases) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(leasesResource, c.ns, opts))
 

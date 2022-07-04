@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsstoragev1 "k8s.io/client-go/applyconfigurations/storage/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeCSIStorageCapacities) List(ctx context.Context, opts v1.ListOptions
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &storagev1.CSIStorageCapacityList{ListMeta: obj.(*storagev1.CSIStorageCapacityList).ListMeta}
+	list := &storagev1.CSIStorageCapacityList{
+		TypeMeta: obj.(*storagev1.CSIStorageCapacityList).TypeMeta,
+		ListMeta: obj.(*storagev1.CSIStorageCapacityList).ListMeta,
+	}
 	for _, item := range obj.(*storagev1.CSIStorageCapacityList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeCSIStorageCapacities) List(ctx context.Context, opts v1.ListOptions
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested cSIStorageCapacities.
-func (c *FakeCSIStorageCapacities) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested cSIStorageCapacities.
+func (c *FakeCSIStorageCapacities) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(csistoragecapacitiesResource, c.ns, opts))
 

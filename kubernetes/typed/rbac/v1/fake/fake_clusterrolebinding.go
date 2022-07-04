@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	applyconfigurationsrbacv1 "k8s.io/client-go/applyconfigurations/rbac/v1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeClusterRoleBindings) List(ctx context.Context, opts v1.ListOptions)
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &rbacv1.ClusterRoleBindingList{ListMeta: obj.(*rbacv1.ClusterRoleBindingList).ListMeta}
+	list := &rbacv1.ClusterRoleBindingList{
+		TypeMeta: obj.(*rbacv1.ClusterRoleBindingList).TypeMeta,
+		ListMeta: obj.(*rbacv1.ClusterRoleBindingList).ListMeta,
+	}
 	for _, item := range obj.(*rbacv1.ClusterRoleBindingList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeClusterRoleBindings) List(ctx context.Context, opts v1.ListOptions)
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested clusterRoleBindings.
-func (c *FakeClusterRoleBindings) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested clusterRoleBindings.
+func (c *FakeClusterRoleBindings) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(clusterrolebindingsResource, opts))
 }

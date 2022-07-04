@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	discoveryv1beta1 "k8s.io/client-go/applyconfigurations/discovery/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -67,7 +67,10 @@ func (c *FakeEndpointSlices) List(ctx context.Context, opts v1.ListOptions) (res
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1beta1.EndpointSliceList{ListMeta: obj.(*v1beta1.EndpointSliceList).ListMeta}
+	list := &v1beta1.EndpointSliceList{
+		TypeMeta: obj.(*v1beta1.EndpointSliceList).TypeMeta,
+		ListMeta: obj.(*v1beta1.EndpointSliceList).ListMeta,
+	}
 	for _, item := range obj.(*v1beta1.EndpointSliceList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -76,8 +79,8 @@ func (c *FakeEndpointSlices) List(ctx context.Context, opts v1.ListOptions) (res
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested endpointSlices.
-func (c *FakeEndpointSlices) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested endpointSlices.
+func (c *FakeEndpointSlices) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(endpointslicesResource, c.ns, opts))
 

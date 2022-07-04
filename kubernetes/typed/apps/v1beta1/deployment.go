@@ -27,9 +27,8 @@ import (
 	v1beta1 "k8s.io/api/apps/v1beta1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	appsv1beta1 "k8s.io/client-go/applyconfigurations/apps/v1beta1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,17 +40,17 @@ type DeploymentsGetter interface {
 
 // DeploymentInterface has methods to work with Deployment resources.
 type DeploymentInterface interface {
-	Create(ctx context.Context, deployment *v1beta1.Deployment, opts v1.CreateOptions) (*v1beta1.Deployment, error)
-	Update(ctx context.Context, deployment *v1beta1.Deployment, opts v1.UpdateOptions) (*v1beta1.Deployment, error)
-	UpdateStatus(ctx context.Context, deployment *v1beta1.Deployment, opts v1.UpdateOptions) (*v1beta1.Deployment, error)
-	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
-	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1beta1.Deployment, error)
-	List(ctx context.Context, opts v1.ListOptions) (*v1beta1.DeploymentList, error)
-	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.Deployment, err error)
-	Apply(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.Deployment, err error)
-	ApplyStatus(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.Deployment, err error)
+	Create(ctx context.Context, deployment *v1beta1.Deployment, options v1.CreateOptions) (*v1beta1.Deployment, error)
+	Update(ctx context.Context, deployment *v1beta1.Deployment, options v1.UpdateOptions) (*v1beta1.Deployment, error)
+	UpdateStatus(ctx context.Context, deployment *v1beta1.Deployment, options v1.UpdateOptions) (*v1beta1.Deployment, error)
+	Delete(ctx context.Context, name string, options v1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error
+	Get(ctx context.Context, name string, options v1.GetOptions) (*v1beta1.Deployment, error)
+	List(ctx context.Context, options v1.ListOptions) (*v1beta1.DeploymentList, error)
+	Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta1.Deployment, err error)
+	Apply(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.Deployment, err error)
+	ApplyStatus(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.Deployment, err error)
 	DeploymentExpansion
 }
 
@@ -73,69 +72,84 @@ func newDeployments(c *AppsV1beta1Client, namespace string) *deployments {
 func (c *deployments) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.Deployment, err error) {
 	result = &v1beta1.Deployment{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of Deployments that match those selectors.
-func (c *deployments) List(ctx context.Context, opts v1.ListOptions) (result *v1beta1.DeploymentList, err error) {
+func (c *deployments) List(ctx context.Context, options v1.ListOptions) (result *v1beta1.DeploymentList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1beta1.DeploymentList{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested deployments.
-func (c *deployments) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested deployments.
+func (c *deployments) Watch(ctx context.Context, options v1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Deployment").
 		Watch(ctx)
 }
 
 // Create takes the representation of a deployment and creates it.  Returns the server's representation of the deployment, and an error, if there is any.
-func (c *deployments) Create(ctx context.Context, deployment *v1beta1.Deployment, opts v1.CreateOptions) (result *v1beta1.Deployment, err error) {
+func (c *deployments) Create(ctx context.Context, deployment *v1beta1.Deployment, options v1.CreateOptions) (result *v1beta1.Deployment, err error) {
 	result = &v1beta1.Deployment{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(deployment).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a deployment and updates it. Returns the server's representation of the deployment, and an error, if there is any.
-func (c *deployments) Update(ctx context.Context, deployment *v1beta1.Deployment, opts v1.UpdateOptions) (result *v1beta1.Deployment, err error) {
+func (c *deployments) Update(ctx context.Context, deployment *v1beta1.Deployment, options v1.UpdateOptions) (result *v1beta1.Deployment, err error) {
 	result = &v1beta1.Deployment{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(deployment.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(deployment).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
@@ -143,68 +157,80 @@ func (c *deployments) Update(ctx context.Context, deployment *v1beta1.Deployment
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *deployments) UpdateStatus(ctx context.Context, deployment *v1beta1.Deployment, opts v1.UpdateOptions) (result *v1beta1.Deployment, err error) {
+func (c *deployments) UpdateStatus(ctx context.Context, deployment *v1beta1.Deployment, options v1.UpdateOptions) (result *v1beta1.Deployment, err error) {
 	result = &v1beta1.Deployment{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(deployment.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(deployment).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the deployment and deletes it. Returns an error if one occurs.
-func (c *deployments) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
+func (c *deployments) Delete(ctx context.Context, name string, options v1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *deployments) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
+func (c *deployments) DeleteCollection(ctx context.Context, options v1.DeleteOptions, listOptions v1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched deployment.
-func (c *deployments) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.Deployment, err error) {
+func (c *deployments) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options v1.PatchOptions, subresources ...string) (result *v1beta1.Deployment, err error) {
 	result = &v1beta1.Deployment{}
 	err = c.client.Patch(pt).
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied deployment.
-func (c *deployments) Apply(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.Deployment, err error) {
+func (c *deployments) Apply(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.Deployment, err error) {
 	if deployment == nil {
 		return nil, fmt.Errorf("deployment provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(deployment)
 	if err != nil {
 		return nil, err
@@ -215,11 +241,14 @@ func (c *deployments) Apply(ctx context.Context, deployment *appsv1beta1.Deploym
 	}
 	result = &v1beta1.Deployment{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return
@@ -227,11 +256,11 @@ func (c *deployments) Apply(ctx context.Context, deployment *appsv1beta1.Deploym
 
 // ApplyStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *deployments) ApplyStatus(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, opts v1.ApplyOptions) (result *v1beta1.Deployment, err error) {
+func (c *deployments) ApplyStatus(ctx context.Context, deployment *appsv1beta1.DeploymentApplyConfiguration, options v1.ApplyOptions) (result *v1beta1.Deployment, err error) {
 	if deployment == nil {
 		return nil, fmt.Errorf("deployment provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(deployment)
 	if err != nil {
 		return nil, err
@@ -244,12 +273,15 @@ func (c *deployments) ApplyStatus(ctx context.Context, deployment *appsv1beta1.D
 
 	result = &v1beta1.Deployment{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1beta1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(*name).
 		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Deployment").
 		Do(ctx).
 		Into(result)
 	return

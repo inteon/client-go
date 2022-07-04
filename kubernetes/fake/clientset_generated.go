@@ -20,10 +20,14 @@ package fake
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	clientset "k8s.io/client-go/kubernetes"
+	admissionv1 "k8s.io/client-go/kubernetes/typed/admission/v1"
+	fakeadmissionv1 "k8s.io/client-go/kubernetes/typed/admission/v1/fake"
+	admissionv1beta1 "k8s.io/client-go/kubernetes/typed/admission/v1beta1"
+	fakeadmissionv1beta1 "k8s.io/client-go/kubernetes/typed/admission/v1beta1/fake"
 	admissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	fakeadmissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1/fake"
 	admissionregistrationv1beta1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1beta1"
@@ -82,6 +86,8 @@ import (
 	fakeflowcontrolv1beta1 "k8s.io/client-go/kubernetes/typed/flowcontrol/v1beta1/fake"
 	flowcontrolv1beta2 "k8s.io/client-go/kubernetes/typed/flowcontrol/v1beta2"
 	fakeflowcontrolv1beta2 "k8s.io/client-go/kubernetes/typed/flowcontrol/v1beta2/fake"
+	imagepolicyv1alpha1 "k8s.io/client-go/kubernetes/typed/imagepolicy/v1alpha1"
+	fakeimagepolicyv1alpha1 "k8s.io/client-go/kubernetes/typed/imagepolicy/v1alpha1/fake"
 	networkingv1 "k8s.io/client-go/kubernetes/typed/networking/v1"
 	fakenetworkingv1 "k8s.io/client-go/kubernetes/typed/networking/v1/fake"
 	networkingv1beta1 "k8s.io/client-go/kubernetes/typed/networking/v1beta1"
@@ -114,6 +120,7 @@ import (
 	fakestoragev1alpha1 "k8s.io/client-go/kubernetes/typed/storage/v1alpha1/fake"
 	storagev1beta1 "k8s.io/client-go/kubernetes/typed/storage/v1beta1"
 	fakestoragev1beta1 "k8s.io/client-go/kubernetes/typed/storage/v1beta1/fake"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/testing"
 )
 
@@ -122,7 +129,10 @@ import (
 // without applying any validations and/or defaults. It shouldn't be considered a replacement
 // for a real clientset and is mostly useful in simple unit tests.
 func NewSimpleClientset(objects ...runtime.Object) *Clientset {
-	o := testing.NewObjectTracker(scheme, codecs.UniversalDecoder())
+	var scheme = runtime.NewScheme()
+	utilruntime.Must(AddToScheme(scheme))
+
+	o := testing.NewObjectTracker(scheme)
 	for _, obj := range objects {
 		if err := o.Add(obj); err != nil {
 			panic(err)
@@ -130,9 +140,10 @@ func NewSimpleClientset(objects ...runtime.Object) *Clientset {
 	}
 
 	cs := &Clientset{tracker: o}
-	cs.discovery = &fakediscovery.FakeDiscovery{Fake: &cs.Fake}
+	cs.discovery = fakediscovery.NewFakeDiscovery()
+	cs.discovery.FakeRawDiscoveryClient.Fake = &cs.Fake
 	cs.AddReactor("*", "*", testing.ObjectReaction(o))
-	cs.AddWatchReactor("*", func(action testing.Action) (handled bool, ret watch.Interface, err error) {
+	cs.AddWatchReactor("*", func(action testing.Action) (handled bool, ret watch.Watcher, err error) {
 		gvr := action.GetResource()
 		ns := action.GetNamespace()
 		watch, err := o.Watch(gvr, ns)
@@ -166,6 +177,16 @@ var (
 	_ clientset.Interface = &Clientset{}
 	_ testing.FakeClient  = &Clientset{}
 )
+
+// AdmissionV1 retrieves the AdmissionV1Client
+func (c *Clientset) AdmissionV1() admissionv1.AdmissionV1Interface {
+	return &fakeadmissionv1.FakeAdmissionV1{Fake: &c.Fake}
+}
+
+// AdmissionV1beta1 retrieves the AdmissionV1beta1Client
+func (c *Clientset) AdmissionV1beta1() admissionv1beta1.AdmissionV1beta1Interface {
+	return &fakeadmissionv1beta1.FakeAdmissionV1beta1{Fake: &c.Fake}
+}
 
 // AdmissionregistrationV1 retrieves the AdmissionregistrationV1Client
 func (c *Clientset) AdmissionregistrationV1() admissionregistrationv1.AdmissionregistrationV1Interface {
@@ -257,14 +278,14 @@ func (c *Clientset) CertificatesV1beta1() certificatesv1beta1.CertificatesV1beta
 	return &fakecertificatesv1beta1.FakeCertificatesV1beta1{Fake: &c.Fake}
 }
 
-// CoordinationV1beta1 retrieves the CoordinationV1beta1Client
-func (c *Clientset) CoordinationV1beta1() coordinationv1beta1.CoordinationV1beta1Interface {
-	return &fakecoordinationv1beta1.FakeCoordinationV1beta1{Fake: &c.Fake}
-}
-
 // CoordinationV1 retrieves the CoordinationV1Client
 func (c *Clientset) CoordinationV1() coordinationv1.CoordinationV1Interface {
 	return &fakecoordinationv1.FakeCoordinationV1{Fake: &c.Fake}
+}
+
+// CoordinationV1beta1 retrieves the CoordinationV1beta1Client
+func (c *Clientset) CoordinationV1beta1() coordinationv1beta1.CoordinationV1beta1Interface {
+	return &fakecoordinationv1beta1.FakeCoordinationV1beta1{Fake: &c.Fake}
 }
 
 // CoreV1 retrieves the CoreV1Client
@@ -312,6 +333,11 @@ func (c *Clientset) FlowcontrolV1beta2() flowcontrolv1beta2.FlowcontrolV1beta2In
 	return &fakeflowcontrolv1beta2.FakeFlowcontrolV1beta2{Fake: &c.Fake}
 }
 
+// ImagepolicyV1alpha1 retrieves the ImagepolicyV1alpha1Client
+func (c *Clientset) ImagepolicyV1alpha1() imagepolicyv1alpha1.ImagepolicyV1alpha1Interface {
+	return &fakeimagepolicyv1alpha1.FakeImagepolicyV1alpha1{Fake: &c.Fake}
+}
+
 // NetworkingV1 retrieves the NetworkingV1Client
 func (c *Clientset) NetworkingV1() networkingv1.NetworkingV1Interface {
 	return &fakenetworkingv1.FakeNetworkingV1{Fake: &c.Fake}
@@ -352,14 +378,19 @@ func (c *Clientset) RbacV1() rbacv1.RbacV1Interface {
 	return &fakerbacv1.FakeRbacV1{Fake: &c.Fake}
 }
 
+// RbacV1alpha1 retrieves the RbacV1alpha1Client
+func (c *Clientset) RbacV1alpha1() rbacv1alpha1.RbacV1alpha1Interface {
+	return &fakerbacv1alpha1.FakeRbacV1alpha1{Fake: &c.Fake}
+}
+
 // RbacV1beta1 retrieves the RbacV1beta1Client
 func (c *Clientset) RbacV1beta1() rbacv1beta1.RbacV1beta1Interface {
 	return &fakerbacv1beta1.FakeRbacV1beta1{Fake: &c.Fake}
 }
 
-// RbacV1alpha1 retrieves the RbacV1alpha1Client
-func (c *Clientset) RbacV1alpha1() rbacv1alpha1.RbacV1alpha1Interface {
-	return &fakerbacv1alpha1.FakeRbacV1alpha1{Fake: &c.Fake}
+// SchedulingV1 retrieves the SchedulingV1Client
+func (c *Clientset) SchedulingV1() schedulingv1.SchedulingV1Interface {
+	return &fakeschedulingv1.FakeSchedulingV1{Fake: &c.Fake}
 }
 
 // SchedulingV1alpha1 retrieves the SchedulingV1alpha1Client
@@ -372,16 +403,6 @@ func (c *Clientset) SchedulingV1beta1() schedulingv1beta1.SchedulingV1beta1Inter
 	return &fakeschedulingv1beta1.FakeSchedulingV1beta1{Fake: &c.Fake}
 }
 
-// SchedulingV1 retrieves the SchedulingV1Client
-func (c *Clientset) SchedulingV1() schedulingv1.SchedulingV1Interface {
-	return &fakeschedulingv1.FakeSchedulingV1{Fake: &c.Fake}
-}
-
-// StorageV1beta1 retrieves the StorageV1beta1Client
-func (c *Clientset) StorageV1beta1() storagev1beta1.StorageV1beta1Interface {
-	return &fakestoragev1beta1.FakeStorageV1beta1{Fake: &c.Fake}
-}
-
 // StorageV1 retrieves the StorageV1Client
 func (c *Clientset) StorageV1() storagev1.StorageV1Interface {
 	return &fakestoragev1.FakeStorageV1{Fake: &c.Fake}
@@ -390,4 +411,9 @@ func (c *Clientset) StorageV1() storagev1.StorageV1Interface {
 // StorageV1alpha1 retrieves the StorageV1alpha1Client
 func (c *Clientset) StorageV1alpha1() storagev1alpha1.StorageV1alpha1Interface {
 	return &fakestoragev1alpha1.FakeStorageV1alpha1{Fake: &c.Fake}
+}
+
+// StorageV1beta1 retrieves the StorageV1beta1Client
+func (c *Clientset) StorageV1beta1() storagev1beta1.StorageV1beta1Interface {
+	return &fakestoragev1beta1.FakeStorageV1beta1{Fake: &c.Fake}
 }

@@ -19,7 +19,7 @@ limitations under the License.
 package internalinterfaces
 
 import (
-	time "time"
+	"context"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
@@ -27,12 +27,12 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// NewInformerFunc takes kubernetes.Interface and time.Duration to return a SharedIndexInformer.
-type NewInformerFunc func(kubernetes.Interface, time.Duration) cache.SharedIndexInformer
+// NewInformerFunc takes kubernetes.Interface to return a SharedIndexInformer.
+type NewInformerFunc func(kubernetes.Interface) cache.SharedIndexInformer
 
 // SharedInformerFactory a small interface to allow for adding an informer without an import cycle
 type SharedInformerFactory interface {
-	Start(stopCh <-chan struct{})
+	Start(ctx context.Context)
 	InformerFor(obj runtime.Object, newFunc NewInformerFunc) cache.SharedIndexInformer
 }
 

@@ -28,8 +28,8 @@ import (
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	storagev1alpha1 "k8s.io/client-go/applyconfigurations/storage/v1alpha1"
+	watch "k8s.io/client-go/pkg/watch"
 	testing "k8s.io/client-go/testing"
 )
 
@@ -64,7 +64,10 @@ func (c *FakeVolumeAttachments) List(ctx context.Context, opts v1.ListOptions) (
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &v1alpha1.VolumeAttachmentList{ListMeta: obj.(*v1alpha1.VolumeAttachmentList).ListMeta}
+	list := &v1alpha1.VolumeAttachmentList{
+		TypeMeta: obj.(*v1alpha1.VolumeAttachmentList).TypeMeta,
+		ListMeta: obj.(*v1alpha1.VolumeAttachmentList).ListMeta,
+	}
 	for _, item := range obj.(*v1alpha1.VolumeAttachmentList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
@@ -73,8 +76,8 @@ func (c *FakeVolumeAttachments) List(ctx context.Context, opts v1.ListOptions) (
 	return list, err
 }
 
-// Watch returns a watch.Interface that watches the requested volumeAttachments.
-func (c *FakeVolumeAttachments) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested volumeAttachments.
+func (c *FakeVolumeAttachments) Watch(ctx context.Context, opts v1.ListOptions) (watch.Watcher, error) {
 	return c.Fake.
 		InvokesWatch(testing.NewRootWatchAction(volumeattachmentsResource, opts))
 }

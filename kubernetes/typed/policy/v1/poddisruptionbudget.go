@@ -27,9 +27,8 @@ import (
 	v1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	policyv1 "k8s.io/client-go/applyconfigurations/policy/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,17 +40,17 @@ type PodDisruptionBudgetsGetter interface {
 
 // PodDisruptionBudgetInterface has methods to work with PodDisruptionBudget resources.
 type PodDisruptionBudgetInterface interface {
-	Create(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.CreateOptions) (*v1.PodDisruptionBudget, error)
-	Update(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.UpdateOptions) (*v1.PodDisruptionBudget, error)
-	UpdateStatus(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.UpdateOptions) (*v1.PodDisruptionBudget, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.PodDisruptionBudget, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.PodDisruptionBudgetList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.PodDisruptionBudget, err error)
-	Apply(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, opts metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error)
-	ApplyStatus(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, opts metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error)
+	Create(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.CreateOptions) (*v1.PodDisruptionBudget, error)
+	Update(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.UpdateOptions) (*v1.PodDisruptionBudget, error)
+	UpdateStatus(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.UpdateOptions) (*v1.PodDisruptionBudget, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.PodDisruptionBudget, error)
+	List(ctx context.Context, options metav1.ListOptions) (*v1.PodDisruptionBudgetList, error)
+	Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.PodDisruptionBudget, err error)
+	Apply(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, options metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error)
+	ApplyStatus(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, options metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error)
 	PodDisruptionBudgetExpansion
 }
 
@@ -73,69 +72,84 @@ func newPodDisruptionBudgets(c *PolicyV1Client, namespace string) *podDisruption
 func (c *podDisruptionBudgets) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.PodDisruptionBudget, err error) {
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of PodDisruptionBudgets that match those selectors.
-func (c *podDisruptionBudgets) List(ctx context.Context, opts metav1.ListOptions) (result *v1.PodDisruptionBudgetList, err error) {
+func (c *podDisruptionBudgets) List(ctx context.Context, options metav1.ListOptions) (result *v1.PodDisruptionBudgetList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1.PodDisruptionBudgetList{}
 	err = c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested podDisruptionBudgets.
-func (c *podDisruptionBudgets) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested podDisruptionBudgets.
+func (c *podDisruptionBudgets) Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("PodDisruptionBudget").
 		Watch(ctx)
 }
 
 // Create takes the representation of a podDisruptionBudget and creates it.  Returns the server's representation of the podDisruptionBudget, and an error, if there is any.
-func (c *podDisruptionBudgets) Create(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.CreateOptions) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) Create(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.CreateOptions) (result *v1.PodDisruptionBudget, err error) {
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Post().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(podDisruptionBudget).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a podDisruptionBudget and updates it. Returns the server's representation of the podDisruptionBudget, and an error, if there is any.
-func (c *podDisruptionBudgets) Update(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.UpdateOptions) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) Update(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.UpdateOptions) (result *v1.PodDisruptionBudget, err error) {
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(podDisruptionBudget.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(podDisruptionBudget).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
@@ -143,68 +157,80 @@ func (c *podDisruptionBudgets) Update(ctx context.Context, podDisruptionBudget *
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *podDisruptionBudgets) UpdateStatus(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, opts metav1.UpdateOptions) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) UpdateStatus(ctx context.Context, podDisruptionBudget *v1.PodDisruptionBudget, options metav1.UpdateOptions) (result *v1.PodDisruptionBudget, err error) {
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Put().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(podDisruptionBudget.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(podDisruptionBudget).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the podDisruptionBudget and deletes it. Returns an error if one occurs.
-func (c *podDisruptionBudgets) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *podDisruptionBudgets) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Error()
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *podDisruptionBudgets) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+func (c *podDisruptionBudgets) DeleteCollection(ctx context.Context, options metav1.DeleteOptions, listOptions metav1.ListOptions) error {
 	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	if listOptions.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
+		VersionedParams(&listOptions).
 		Timeout(timeout).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched podDisruptionBudget.
-func (c *podDisruptionBudgets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.PodDisruptionBudget, err error) {
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Patch(pt).
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied podDisruptionBudget.
-func (c *podDisruptionBudgets) Apply(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, opts metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) Apply(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, options metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error) {
 	if podDisruptionBudget == nil {
 		return nil, fmt.Errorf("podDisruptionBudget provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(podDisruptionBudget)
 	if err != nil {
 		return nil, err
@@ -215,11 +241,14 @@ func (c *podDisruptionBudgets) Apply(ctx context.Context, podDisruptionBudget *p
 	}
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return
@@ -227,11 +256,11 @@ func (c *podDisruptionBudgets) Apply(ctx context.Context, podDisruptionBudget *p
 
 // ApplyStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *podDisruptionBudgets) ApplyStatus(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, opts metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error) {
+func (c *podDisruptionBudgets) ApplyStatus(ctx context.Context, podDisruptionBudget *policyv1.PodDisruptionBudgetApplyConfiguration, options metav1.ApplyOptions) (result *v1.PodDisruptionBudget, err error) {
 	if podDisruptionBudget == nil {
 		return nil, fmt.Errorf("podDisruptionBudget provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(podDisruptionBudget)
 	if err != nil {
 		return nil, err
@@ -244,12 +273,15 @@ func (c *podDisruptionBudgets) ApplyStatus(ctx context.Context, podDisruptionBud
 
 	result = &v1.PodDisruptionBudget{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/apis").
+		GroupVersion(v1.SchemeGroupVersion).
 		Namespace(c.ns).
 		Resource("poddisruptionbudgets").
 		Name(*name).
 		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("PodDisruptionBudget").
 		Do(ctx).
 		Into(result)
 	return

@@ -33,3 +33,11 @@ type DeploymentListerExpansion interface{}
 // DeploymentNamespaceListerExpansion allows custom methods to be added to
 // DeploymentNamespaceLister.
 type DeploymentNamespaceListerExpansion interface{}
+
+// StatefulSetListerExpansion allows custom methods to be added to
+// StatefulSetLister.
+type StatefulSetListerExpansion interface{}
+
+// StatefulSetNamespaceListerExpansion allows custom methods to be added to
+// StatefulSetNamespaceLister.
+type StatefulSetNamespaceListerExpansion interface{}

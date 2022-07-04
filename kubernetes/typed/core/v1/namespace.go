@@ -27,9 +27,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
 	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
-	scheme "k8s.io/client-go/kubernetes/scheme"
+	watch "k8s.io/client-go/pkg/watch"
 	rest "k8s.io/client-go/rest"
 )
 
@@ -41,16 +40,16 @@ type NamespacesGetter interface {
 
 // NamespaceInterface has methods to work with Namespace resources.
 type NamespaceInterface interface {
-	Create(ctx context.Context, namespace *v1.Namespace, opts metav1.CreateOptions) (*v1.Namespace, error)
-	Update(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (*v1.Namespace, error)
-	UpdateStatus(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (*v1.Namespace, error)
-	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.Namespace, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.NamespaceList, error)
-	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Namespace, err error)
-	Apply(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Namespace, err error)
-	ApplyStatus(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Namespace, err error)
+	Create(ctx context.Context, namespace *v1.Namespace, options metav1.CreateOptions) (*v1.Namespace, error)
+	Update(ctx context.Context, namespace *v1.Namespace, options metav1.UpdateOptions) (*v1.Namespace, error)
+	UpdateStatus(ctx context.Context, namespace *v1.Namespace, options metav1.UpdateOptions) (*v1.Namespace, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Namespace, error)
+	List(ctx context.Context, options metav1.ListOptions) (*v1.NamespaceList, error)
+	Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.Namespace, err error)
+	Apply(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Namespace, err error)
+	ApplyStatus(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Namespace, err error)
 	NamespaceExpansion
 }
 
@@ -70,64 +69,79 @@ func newNamespaces(c *CoreV1Client) *namespaces {
 func (c *namespaces) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Namespace, err error) {
 	result = &v1.Namespace{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
+		VersionedParams(&options).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // List takes label and field selectors, and returns the list of Namespaces that match those selectors.
-func (c *namespaces) List(ctx context.Context, opts metav1.ListOptions) (result *v1.NamespaceList, err error) {
+func (c *namespaces) List(ctx context.Context, options metav1.ListOptions) (result *v1.NamespaceList, err error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
 	result = &v1.NamespaceList{}
 	err = c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested namespaces.
-func (c *namespaces) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Watcher that watches the requested namespaces.
+func (c *namespaces) Watch(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	if options.TimeoutSeconds != nil {
+		timeout = time.Duration(*options.TimeoutSeconds) * time.Second
 	}
-	opts.Watch = true
+	options.Watch = true
 	return c.client.Get().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Timeout(timeout).
+		ExpectKind("Namespace").
 		Watch(ctx)
 }
 
 // Create takes the representation of a namespace and creates it.  Returns the server's representation of the namespace, and an error, if there is any.
-func (c *namespaces) Create(ctx context.Context, namespace *v1.Namespace, opts metav1.CreateOptions) (result *v1.Namespace, err error) {
+func (c *namespaces) Create(ctx context.Context, namespace *v1.Namespace, options metav1.CreateOptions) (result *v1.Namespace, err error) {
 	result = &v1.Namespace{}
 	err = c.client.Post().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(namespace).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Update takes the representation of a namespace and updates it. Returns the server's representation of the namespace, and an error, if there is any.
-func (c *namespaces) Update(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (result *v1.Namespace, err error) {
+func (c *namespaces) Update(ctx context.Context, namespace *v1.Namespace, options metav1.UpdateOptions) (result *v1.Namespace, err error) {
 	result = &v1.Namespace{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(namespace.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(namespace).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
@@ -135,49 +149,58 @@ func (c *namespaces) Update(ctx context.Context, namespace *v1.Namespace, opts m
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *namespaces) UpdateStatus(ctx context.Context, namespace *v1.Namespace, opts metav1.UpdateOptions) (result *v1.Namespace, err error) {
+func (c *namespaces) UpdateStatus(ctx context.Context, namespace *v1.Namespace, options metav1.UpdateOptions) (result *v1.Namespace, err error) {
 	result = &v1.Namespace{}
 	err = c.client.Put().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(namespace.Name).
 		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(namespace).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Delete takes name of the namespace and deletes it. Returns an error if one occurs.
-func (c *namespaces) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+func (c *namespaces) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	return c.client.Delete().
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(name).
-		Body(&opts).
+		Body(&options).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Error()
 }
 
 // Patch applies the patch and returns the patched namespace.
-func (c *namespaces) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Namespace, err error) {
+func (c *namespaces) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, options metav1.PatchOptions, subresources ...string) (result *v1.Namespace, err error) {
 	result = &v1.Namespace{}
 	err = c.client.Patch(pt).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(name).
 		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
+		VersionedParams(&options).
 		Body(data).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
 }
 
 // Apply takes the given apply declarative configuration, applies it and returns the applied namespace.
-func (c *namespaces) Apply(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Namespace, err error) {
+func (c *namespaces) Apply(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Namespace, err error) {
 	if namespace == nil {
 		return nil, fmt.Errorf("namespace provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(namespace)
 	if err != nil {
 		return nil, err
@@ -188,10 +211,13 @@ func (c *namespaces) Apply(ctx context.Context, namespace *corev1.NamespaceApply
 	}
 	result = &v1.Namespace{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return
@@ -199,11 +225,11 @@ func (c *namespaces) Apply(ctx context.Context, namespace *corev1.NamespaceApply
 
 // ApplyStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *namespaces) ApplyStatus(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.Namespace, err error) {
+func (c *namespaces) ApplyStatus(ctx context.Context, namespace *corev1.NamespaceApplyConfiguration, options metav1.ApplyOptions) (result *v1.Namespace, err error) {
 	if namespace == nil {
 		return nil, fmt.Errorf("namespace provided to Apply must not be nil")
 	}
-	patchOpts := opts.ToPatchOptions()
+	patchOpts := options.ToPatchOptions()
 	data, err := json.Marshal(namespace)
 	if err != nil {
 		return nil, err
@@ -216,11 +242,14 @@ func (c *namespaces) ApplyStatus(ctx context.Context, namespace *corev1.Namespac
 
 	result = &v1.Namespace{}
 	err = c.client.Patch(types.ApplyPatchType).
+		ApiPath("/api").
+		GroupVersion(v1.SchemeGroupVersion).
 		Resource("namespaces").
 		Name(*name).
 		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		VersionedParams(&patchOpts).
 		Body(data).
+		ExpectKind("Namespace").
 		Do(ctx).
 		Into(result)
 	return

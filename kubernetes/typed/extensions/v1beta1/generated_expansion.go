@@ -20,6 +20,8 @@ package v1beta1
 
 type DaemonSetExpansion interface{}
 
+type DeploymentExpansion interface{}
+
 type IngressExpansion interface{}
 
 type NetworkPolicyExpansion interface{}
