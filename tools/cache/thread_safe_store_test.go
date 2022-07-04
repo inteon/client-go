@@ -35,15 +35,14 @@ func TestThreadSafeStoreDeleteRemovesEmptySetsFromIndex(t *testing.T) {
 		},
 	}
 
-	indices := Indices{}
-	store := NewThreadSafeStore(indexers, indices).(*threadSafeMap)
+	store := NewThreadSafeStore(indexers).(*threadSafeMap)
 
 	testKey := "testKey"
 
 	store.Add(testKey, testKey)
 
 	// Assumption check, there should be a set for the `testKey` with one element in the added index
-	set := store.indices[testIndexer][testKey]
+	set := store.indices[testIndexer].values[testKey]
 
 	if len(set) != 1 {
 		t.Errorf("Initial assumption of index backing string set having 1 element failed. Actual elements: %d", len(set))
@@ -51,7 +50,7 @@ func TestThreadSafeStoreDeleteRemovesEmptySetsFromIndex(t *testing.T) {
 	}
 
 	store.Delete(testKey)
-	set, present := store.indices[testIndexer][testKey]
+	set, present := store.indices[testIndexer].values[testKey]
 
 	if present {
 		t.Errorf("Index backing string set not deleted from index. Set length: %d", len(set))
@@ -69,14 +68,13 @@ func TestThreadSafeStoreAddKeepsNonEmptySetPostDeleteFromIndex(t *testing.T) {
 		},
 	}
 
-	indices := Indices{}
-	store := NewThreadSafeStore(indexers, indices).(*threadSafeMap)
+	store := NewThreadSafeStore(indexers).(*threadSafeMap)
 
 	store.Add("retain", "retain")
 	store.Add("delete", "delete")
 
 	// Assumption check, there should be a set for the `testIndex` with two elements
-	set := store.indices[testIndexer][testIndex]
+	set := store.indices[testIndexer].values[testIndex]
 
 	if len(set) != 2 {
 		t.Errorf("Initial assumption of index backing string set having 2 elements failed. Actual elements: %d", len(set))
@@ -84,7 +82,7 @@ func TestThreadSafeStoreAddKeepsNonEmptySetPostDeleteFromIndex(t *testing.T) {
 	}
 
 	store.Delete("delete")
-	set, present := store.indices[testIndexer][testIndex]
+	set, present := store.indices[testIndexer].values[testIndex]
 
 	if !present {
 		t.Errorf("Index backing string set erroneously deleted from index.")
@@ -105,8 +103,7 @@ func TestThreadSafeStoreIndexingFunctionsWithMultipleValues(t *testing.T) {
 		},
 	}
 
-	indices := Indices{}
-	store := NewThreadSafeStore(indexers, indices).(*threadSafeMap)
+	store := NewThreadSafeStore(indexers).(*threadSafeMap)
 
 	store.Add("key1", "foo")
 	store.Add("key2", "bar")
@@ -114,7 +111,7 @@ func TestThreadSafeStoreIndexingFunctionsWithMultipleValues(t *testing.T) {
 	assert := assert.New(t)
 
 	compare := func(key string, expected []string) error {
-		values := store.indices[testIndexer][key].List()
+		values := store.indices[testIndexer].values[key].List()
 		if cmp.Equal(values, expected) {
 			return nil
 		}
@@ -175,8 +172,7 @@ func BenchmarkIndexer(b *testing.B) {
 		},
 	}
 
-	indices := Indices{}
-	store := NewThreadSafeStore(indexers, indices).(*threadSafeMap)
+	store := NewThreadSafeStore(indexers).(*threadSafeMap)
 
 	// The following benchmark imitates what is happening in indexes
 	// used in storage layer, where indexing is mostly static (e.g.

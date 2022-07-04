@@ -17,6 +17,7 @@ limitations under the License.
 package events
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -25,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/record/util"
 	"k8s.io/client-go/tools/reference"
 	"k8s.io/klog/v2"
@@ -36,7 +37,7 @@ type recorderImpl struct {
 	scheme              *runtime.Scheme
 	reportingController string
 	reportingInstance   string
-	*watch.Broadcaster
+	*watch.BoundedWatcher
 	clock clock.Clock
 }
 
@@ -63,7 +64,7 @@ func (recorder *recorderImpl) Eventf(regarding runtime.Object, related runtime.O
 	event := recorder.makeEvent(refRegarding, refRelated, timestamp, eventtype, reason, message, recorder.reportingController, recorder.reportingInstance, action)
 	go func() {
 		defer utilruntime.HandleCrash()
-		recorder.Action(watch.Added, event)
+		recorder.Action(context.TODO(), watch.Added, event)
 	}()
 }
 

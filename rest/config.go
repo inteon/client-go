@@ -27,12 +27,11 @@ import (
 	"os"
 	"path/filepath"
 	gruntime "runtime"
+	"strconv"
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/pkg/version"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/transport"
@@ -56,12 +55,10 @@ type Config struct {
 	// be appended to all request URIs used to access the apiserver. This allows a frontend
 	// proxy to easily relocate all of the apiserver endpoints.
 	Host string
-	// APIPath is a sub-path that points to an API root.
-	APIPath string
 
-	// ContentConfig contains settings that affect how objects are transformed when
-	// sent to the server.
-	ContentConfig
+	// Negotiator is used for obtaining encoders and decoders for multiple
+	// supported media types.
+	Negotiator SerializerNegotiator
 
 	// Server requires Basic authentication
 	Username string
@@ -259,17 +256,7 @@ func (c TLSClientConfig) GoString() string {
 // String implements fmt.Stringer and sanitizes sensitive fields of
 // TLSClientConfig to prevent accidental leaking via logs.
 func (c TLSClientConfig) String() string {
-	cc := sanitizedTLSClientConfig{
-		Insecure:   c.Insecure,
-		ServerName: c.ServerName,
-		CertFile:   c.CertFile,
-		KeyFile:    c.KeyFile,
-		CAFile:     c.CAFile,
-		CertData:   c.CertData,
-		KeyData:    c.KeyData,
-		CAData:     c.CAData,
-		NextProtos: c.NextProtos,
-	}
+	cc := sanitizedTLSClientConfig(c)
 	// Explicitly mark non-empty credential fields as redacted.
 	if len(cc.CertData) != 0 {
 		cc.CertData = []byte("--- TRUNCATED ---")
@@ -280,27 +267,6 @@ func (c TLSClientConfig) String() string {
 	return fmt.Sprintf("%#v", cc)
 }
 
-type ContentConfig struct {
-	// AcceptContentTypes specifies the types the client will accept and is optional.
-	// If not set, ContentType will be used to define the Accept header
-	AcceptContentTypes string
-	// ContentType specifies the wire format used to communicate with the server.
-	// This value will be set as the Accept header on requests made to the server, and
-	// as the default content type on any object sent to the server. If not set,
-	// "application/json" is used.
-	ContentType string
-	// GroupVersion is the API version to talk to. Must be provided when initializing
-	// a RESTClient directly. When initializing a Client, will be set with the default
-	// code version.
-	GroupVersion *schema.GroupVersion
-	// NegotiatedSerializer is used for obtaining encoders and decoders for multiple
-	// supported media types.
-	//
-	// TODO: NegotiatedSerializer will be phased out as internal clients are removed
-	//   from Kubernetes.
-	NegotiatedSerializer runtime.NegotiatedSerializer
-}
-
 // RESTClientFor returns a RESTClient that satisfies the requested attributes on a client Config
 // object. Note that a RESTClient may require fields that are optional when initializing a Client.
 // A RESTClient created by this method is generic - it expects to operate on an API that follows
@@ -308,16 +274,13 @@ type ContentConfig struct {
 // RESTClientFor is equivalent to calling RESTClientForConfigAndClient(config, httpClient),
 // where httpClient was generated with HTTPClientFor(config).
 func RESTClientFor(config *Config) (*RESTClient, error) {
-	if config.GroupVersion == nil {
-		return nil, fmt.Errorf("GroupVersion is required when initializing a RESTClient")
-	}
-	if config.NegotiatedSerializer == nil {
-		return nil, fmt.Errorf("NegotiatedSerializer is required when initializing a RESTClient")
+	if config.Negotiator == nil {
+		return nil, fmt.Errorf("negotiator is required when initializing a RESTClient")
 	}
 
 	// Validate config.Host before constructing the transport/client so we can fail fast.
 	// ServerURL will be obtained later in RESTClientForConfigAndClient()
-	_, _, err := defaultServerUrlFor(config)
+	_, err := defaultServerUrlFor(config)
 	if err != nil {
 		return nil, err
 	}
@@ -330,6 +293,31 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 	return RESTClientForConfigAndClient(config, httpClient)
 }
 
+const (
+	// Environment variables: Note that the duration should be long enough that the backoff
+	// persists for some reasonable time (i.e. 120 seconds).  The typical base might be "1".
+	envBackoffBase     = "KUBE_CLIENT_BACKOFF_BASE"
+	envBackoffDuration = "KUBE_CLIENT_BACKOFF_DURATION"
+)
+
+// readExpBackoffConfig handles the internal logic of determining what the
+// backoff policy is.  By default if no information is available, NoBackoff.
+// TODO Generalize this see #17727 .
+func readExpBackoffConfig() BackoffManager {
+	backoffBase := os.Getenv(envBackoffBase)
+	backoffDuration := os.Getenv(envBackoffDuration)
+
+	backoffBaseInt, errBase := strconv.ParseInt(backoffBase, 10, 64)
+	backoffDurationInt, errDuration := strconv.ParseInt(backoffDuration, 10, 64)
+	if errBase != nil || errDuration != nil {
+		return &NoBackoff{}
+	}
+	return &URLBackoff{
+		Backoff: flowcontrol.NewBackOff(
+			time.Duration(backoffBaseInt)*time.Second,
+			time.Duration(backoffDurationInt)*time.Second)}
+}
+
 // RESTClientForConfigAndClient returns a RESTClient that satisfies the requested attributes on a
 // client Config object.
 // Unlike RESTClientFor, RESTClientForConfigAndClient allows to pass an http.Client that is shared
@@ -337,14 +325,11 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 // Note that the http client takes precedence over the transport values configured.
 // The http client defaults to the `http.DefaultClient` if nil.
 func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RESTClient, error) {
-	if config.GroupVersion == nil {
-		return nil, fmt.Errorf("GroupVersion is required when initializing a RESTClient")
-	}
-	if config.NegotiatedSerializer == nil {
-		return nil, fmt.Errorf("NegotiatedSerializer is required when initializing a RESTClient")
+	if config.Negotiator == nil {
+		return nil, fmt.Errorf("negotiator is required when initializing a RESTClient")
 	}
 
-	baseURL, versionedAPIPath, err := defaultServerUrlFor(config)
+	baseURL, err := defaultServerUrlFor(config)
 	if err != nil {
 		return nil, err
 	}
@@ -364,85 +349,7 @@ func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RES
 		}
 	}
 
-	var gv schema.GroupVersion
-	if config.GroupVersion != nil {
-		gv = *config.GroupVersion
-	}
-	clientContent := ClientContentConfig{
-		AcceptContentTypes: config.AcceptContentTypes,
-		ContentType:        config.ContentType,
-		GroupVersion:       gv,
-		Negotiator:         runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
-	}
-
-	restClient, err := NewRESTClient(baseURL, versionedAPIPath, clientContent, rateLimiter, httpClient)
-	if err == nil && config.WarningHandler != nil {
-		restClient.warningHandler = config.WarningHandler
-	}
-	return restClient, err
-}
-
-// UnversionedRESTClientFor is the same as RESTClientFor, except that it allows
-// the config.Version to be empty.
-func UnversionedRESTClientFor(config *Config) (*RESTClient, error) {
-	if config.NegotiatedSerializer == nil {
-		return nil, fmt.Errorf("NegotiatedSerializer is required when initializing a RESTClient")
-	}
-
-	// Validate config.Host before constructing the transport/client so we can fail fast.
-	// ServerURL will be obtained later in UnversionedRESTClientForConfigAndClient()
-	_, _, err := defaultServerUrlFor(config)
-	if err != nil {
-		return nil, err
-	}
-
-	httpClient, err := HTTPClientFor(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return UnversionedRESTClientForConfigAndClient(config, httpClient)
-}
-
-// UnversionedRESTClientForConfigAndClient is the same as RESTClientForConfigAndClient,
-// except that it allows the config.Version to be empty.
-func UnversionedRESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RESTClient, error) {
-	if config.NegotiatedSerializer == nil {
-		return nil, fmt.Errorf("NegotiatedSerializer is required when initializing a RESTClient")
-	}
-
-	baseURL, versionedAPIPath, err := defaultServerUrlFor(config)
-	if err != nil {
-		return nil, err
-	}
-
-	rateLimiter := config.RateLimiter
-	if rateLimiter == nil {
-		qps := config.QPS
-		if config.QPS == 0.0 {
-			qps = DefaultQPS
-		}
-		burst := config.Burst
-		if config.Burst == 0 {
-			burst = DefaultBurst
-		}
-		if qps > 0 {
-			rateLimiter = flowcontrol.NewTokenBucketRateLimiter(qps, burst)
-		}
-	}
-
-	gv := metav1.SchemeGroupVersion
-	if config.GroupVersion != nil {
-		gv = *config.GroupVersion
-	}
-	clientContent := ClientContentConfig{
-		AcceptContentTypes: config.AcceptContentTypes,
-		ContentType:        config.ContentType,
-		GroupVersion:       gv,
-		Negotiator:         runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
-	}
-
-	restClient, err := NewRESTClient(baseURL, versionedAPIPath, clientContent, rateLimiter, httpClient)
+	restClient, err := NewRESTClient(baseURL, config.Negotiator, readExpBackoffConfig, rateLimiter, config.WarningHandler, httpClient)
 	if err == nil && config.WarningHandler != nil {
 		restClient.warningHandler = config.WarningHandler
 	}
@@ -549,7 +456,7 @@ func InClusterConfig() (*Config, error) {
 // Note: the Insecure flag is ignored when testing for this value, so MITM attacks are
 // still possible.
 func IsConfigTransportTLS(config Config) bool {
-	baseURL, _, err := defaultServerUrlFor(&config)
+	baseURL, err := defaultServerUrlFor(&config)
 	if err != nil {
 		return false
 	}
@@ -604,9 +511,8 @@ func AddUserAgent(config *Config, userAgent string) *Config {
 func AnonymousClientConfig(config *Config) *Config {
 	// copy only known safe fields
 	return &Config{
-		Host:          config.Host,
-		APIPath:       config.APIPath,
-		ContentConfig: config.ContentConfig,
+		Host:       config.Host,
+		Negotiator: config.Negotiator,
 		TLSClientConfig: TLSClientConfig{
 			Insecure:   config.Insecure,
 			ServerName: config.ServerName,
@@ -630,8 +536,7 @@ func AnonymousClientConfig(config *Config) *Config {
 func CopyConfig(config *Config) *Config {
 	c := &Config{
 		Host:            config.Host,
-		APIPath:         config.APIPath,
-		ContentConfig:   config.ContentConfig,
+		Negotiator:      config.Negotiator,
 		Username:        config.Username,
 		Password:        config.Password,
 		BearerToken:     config.BearerToken,

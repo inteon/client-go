@@ -19,7 +19,6 @@ package watch
 import (
 	"context"
 	"reflect"
-	goruntime "runtime"
 	"sort"
 	"testing"
 	"time"
@@ -32,91 +31,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/diff"
-	"k8s.io/apimachinery/pkg/watch"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 	testcore "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 )
-
-// TestEventProcessorExit is expected to timeout if the event processor fails
-// to exit when stopped.
-func TestEventProcessorExit(t *testing.T) {
-	event := watch.Event{}
-
-	tests := []struct {
-		name  string
-		write func(e *eventProcessor)
-	}{
-		{
-			name: "exit on blocked read",
-			write: func(e *eventProcessor) {
-				e.push(event)
-			},
-		},
-		{
-			name: "exit on blocked write",
-			write: func(e *eventProcessor) {
-				e.push(event)
-				e.push(event)
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			out := make(chan watch.Event)
-			e := newEventProcessor(out)
-
-			test.write(e)
-
-			exited := make(chan struct{})
-			go func() {
-				e.run()
-				close(exited)
-			}()
-
-			<-out
-			e.stop()
-			goruntime.Gosched()
-			<-exited
-		})
-	}
-}
 
 type apiInt int
 
 func (apiInt) GetObjectKind() schema.ObjectKind { return nil }
 func (apiInt) DeepCopyObject() runtime.Object   { return nil }
-
-func TestEventProcessorOrdersEvents(t *testing.T) {
-	out := make(chan watch.Event)
-	e := newEventProcessor(out)
-	go e.run()
-
-	numProcessed := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	go func() {
-		for i := 0; i < 1000; i++ {
-			e := <-out
-			if got, want := int(e.Object.(apiInt)), i; got != want {
-				t.Errorf("unexpected event: got=%d, want=%d", got, want)
-			}
-			numProcessed++
-		}
-		cancel()
-	}()
-
-	for i := 0; i < 1000; i++ {
-		e.push(watch.Event{Object: apiInt(i)})
-	}
-
-	<-ctx.Done()
-	e.stop()
-
-	if numProcessed != 1000 {
-		t.Errorf("unexpected number of events processed: %d", numProcessed)
-	}
-
-}
 
 type byEventTypeAndName []watch.Event
 
@@ -206,6 +131,9 @@ func TestNewInformerWatcher(t *testing.T) {
 
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
 			var expected []watch.Event
 			for _, o := range tc.objects {
 				expected = append(expected, watch.Event{
@@ -218,22 +146,24 @@ func TestNewInformerWatcher(t *testing.T) {
 			}
 
 			fake := fakeclientset.NewSimpleClientset(tc.objects...)
-			fakeWatch := watch.NewFakeWithChanSize(len(tc.events), false)
+			fakeWatch := watch.NewBoundedWatcherWithSize(len(tc.events))
 			fake.PrependWatchReactor("secrets", testcore.DefaultWatchReactor(fakeWatch, nil))
 
 			for _, e := range tc.events {
-				fakeWatch.Action(e.Type, e.Object)
+				fakeWatch.TryAction(e.Type, e.Object)
 			}
 
 			lw := &cache.ListWatch{
-				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-					return fake.CoreV1().Secrets("").List(context.TODO(), options)
+				ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+					return fake.CoreV1().Secrets("").List(ctx, options)
 				},
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return fake.CoreV1().Secrets("").Watch(context.TODO(), options)
+				WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return fake.CoreV1().Secrets("").Watch(ctx, options)
 				},
 			}
-			_, _, w, done := NewIndexerInformerWatcher(lw, &corev1.Secret{})
+			_, _, w := NewIndexerInformerWatcher(lw, &corev1.Secret{})
+			eventCh, ctx, complete := concurrent.Watch(ctx, w)
+			defer complete()
 
 			var result []watch.Event
 		loop:
@@ -241,7 +171,7 @@ func TestNewInformerWatcher(t *testing.T) {
 				var event watch.Event
 				var ok bool
 				select {
-				case event, ok = <-w.ResultChan():
+				case event, ok = <-eventCh:
 					if !ok {
 						t.Errorf("Failed to read event: channel is already closed!")
 						return
@@ -266,13 +196,8 @@ func TestNewInformerWatcher(t *testing.T) {
 
 			// Fill in some data to test watch closing while there are some events to be read
 			for _, e := range tc.events {
-				fakeWatch.Action(e.Type, e.Object)
+				fakeWatch.Action(ctx, e.Type, e.Object)
 			}
-
-			// Stop before reading all the data to make sure the informer can deal with closed channel
-			w.Stop()
-
-			<-done
 		})
 	}
 
@@ -285,10 +210,13 @@ func TestNewInformerWatcher(t *testing.T) {
 //
 // Code from @liggitt
 func TestInformerWatcherDeletedFinalStateUnknown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	listCalls := 0
 	watchCalls := 0
 	lw := &cache.ListWatch{
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+		ListFunc: func(_ context.Context, options metav1.ListOptions) (runtime.Object, error) {
 			retval := &corev1.SecretList{}
 			if listCalls == 0 {
 				// Return a list with items in it
@@ -301,24 +229,25 @@ func TestInformerWatcherDeletedFinalStateUnknown(t *testing.T) {
 			listCalls++
 			return retval, nil
 		},
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			w := watch.NewFake()
+		WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+			w := watch.NewBoundedWatcher()
 			if options.ResourceVersion == "1" {
 				go func() {
 					// Close with a "Gone" error when trying to start a watch from the first list
-					w.Error(&apierrors.NewGone("gone").ErrStatus)
-					w.Stop()
+					w.Error(ctx, &apierrors.NewGone("gone").ErrStatus)
 				}()
 			}
 			watchCalls++
 			return w, nil
 		},
 	}
-	_, _, w, done := NewIndexerInformerWatcher(lw, &corev1.Secret{})
+	_, _, w := NewIndexerInformerWatcher(lw, &corev1.Secret{})
+	eventCh, _, complete := concurrent.Watch(ctx, w)
+	defer complete()
 
 	// Expect secret add
 	select {
-	case event, ok := <-w.ResultChan():
+	case event, ok := <-eventCh:
 		if !ok {
 			t.Fatal("unexpected close")
 		}
@@ -329,12 +258,12 @@ func TestInformerWatcherDeletedFinalStateUnknown(t *testing.T) {
 			t.Fatalf("expected added Secret with rv=123, got %#v", event.Object)
 		}
 	case <-time.After(time.Second * 10):
-		t.Fatal("timeout")
+		t.Fatal("timeout: add")
 	}
 
 	// Expect secret delete because the relist was missing the secret
 	select {
-	case event, ok := <-w.ResultChan():
+	case event, ok := <-eventCh:
 		if !ok {
 			t.Fatal("unexpected close")
 		}
@@ -345,15 +274,10 @@ func TestInformerWatcherDeletedFinalStateUnknown(t *testing.T) {
 			t.Fatalf("expected deleted Secret with rv=123, got %#v", event.Object)
 		}
 	case <-time.After(time.Second * 10):
-		t.Fatal("timeout")
+		t.Fatal("timeout: delete")
 	}
 
-	w.Stop()
-	select {
-	case <-done:
-	case <-time.After(time.Second * 10):
-		t.Fatal("timeout")
-	}
+	complete()
 
 	if listCalls < 2 {
 		t.Fatalf("expected at least 2 list calls, got %d", listCalls)

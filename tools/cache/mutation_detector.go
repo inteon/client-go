@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -42,7 +43,7 @@ type MutationDetector interface {
 	AddObject(obj interface{})
 
 	// Run starts the monitoring and does not return until the monitoring is stopped.
-	Run(stopCh <-chan struct{})
+	Run(ctx context.Context)
 }
 
 // NewCacheMutationDetector creates a new instance for the defaultCacheMutationDetector.
@@ -56,7 +57,7 @@ func NewCacheMutationDetector(name string) MutationDetector {
 
 type dummyMutationDetector struct{}
 
-func (dummyMutationDetector) Run(stopCh <-chan struct{}) {
+func (dummyMutationDetector) Run(ctx context.Context) {
 }
 func (dummyMutationDetector) AddObject(obj interface{}) {
 }
@@ -94,7 +95,7 @@ type cacheObj struct {
 	copied interface{}
 }
 
-func (d *defaultCacheMutationDetector) Run(stopCh <-chan struct{}) {
+func (d *defaultCacheMutationDetector) Run(ctx context.Context) {
 	// we DON'T want protection from panics.  If we're running this code, we want to die
 	for {
 		if d.lastRotated.IsZero() {
@@ -108,7 +109,7 @@ func (d *defaultCacheMutationDetector) Run(stopCh <-chan struct{}) {
 		d.CompareObjects()
 
 		select {
-		case <-stopCh:
+		case <-ctx.Done():
 			return
 		case <-time.After(d.period):
 		}

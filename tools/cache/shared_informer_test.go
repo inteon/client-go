@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -29,38 +30,35 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fcache "k8s.io/client-go/tools/cache/testing"
-	testingclock "k8s.io/utils/clock/testing"
 )
 
 type testListener struct {
 	lock              sync.RWMutex
-	resyncPeriod      time.Duration
 	expectedItemNames sets.String
 	receivedItemNames []string
 	name              string
 }
 
-func newTestListener(name string, resyncPeriod time.Duration, expected ...string) *testListener {
+func newTestListener(name string, expected ...string) *testListener {
 	l := &testListener{
-		resyncPeriod:      resyncPeriod,
 		expectedItemNames: sets.NewString(expected...),
 		name:              name,
 	}
 	return l
 }
 
-func (l *testListener) OnAdd(obj interface{}) {
-	l.handle(obj)
+func (l *testListener) OnAdd(ctx context.Context, obj interface{}) {
+	l.handle(ctx, obj)
 }
 
-func (l *testListener) OnUpdate(old, new interface{}) {
-	l.handle(new)
+func (l *testListener) OnUpdate(ctx context.Context, old, new interface{}) {
+	l.handle(ctx, new)
 }
 
-func (l *testListener) OnDelete(obj interface{}) {
+func (l *testListener) OnDelete(ctx context.Context, obj interface{}) {
 }
 
-func (l *testListener) handle(obj interface{}) {
+func (l *testListener) handle(ctx context.Context, obj interface{}) {
 	key, _ := MetaNamespaceKeyFunc(obj)
 	fmt.Printf("%s: handle: %v\n", l.name, key)
 	l.lock.Lock()
@@ -97,35 +95,33 @@ func (l *testListener) satisfiedExpectations() bool {
 }
 
 func TestListenerResyncPeriods(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// source simulates an apiserver object endpoint.
 	source := fcache.NewFakeControllerSource()
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1"}})
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2"}})
+
+	defer cancel()
 
 	// create the shared informer and resync every 1s
-	informer := NewSharedInformer(source, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
-
-	clock := testingclock.NewFakeClock(time.Now())
-	informer.clock = clock
-	informer.processor.clock = clock
+	informer := NewSharedInformer(source, &v1.Pod{}).(*sharedIndexInformer)
 
 	// listener 1, never resync
-	listener1 := newTestListener("listener1", 0, "pod1", "pod2")
-	informer.AddEventHandlerWithResyncPeriod(listener1, listener1.resyncPeriod)
+	listener1 := newTestListener("listener1", "pod1", "pod2")
+	informer.AddEventHandler(ctx, listener1)
 
-	// listener 2, resync every 2s
-	listener2 := newTestListener("listener2", 2*time.Second, "pod1", "pod2")
-	informer.AddEventHandlerWithResyncPeriod(listener2, listener2.resyncPeriod)
+	// listener 2, never resync
+	listener2 := newTestListener("listener2", "pod1", "pod2")
+	informer.AddEventHandler(ctx, listener2)
 
-	// listener 3, resync every 3s
-	listener3 := newTestListener("listener3", 3*time.Second, "pod1", "pod2")
-	informer.AddEventHandlerWithResyncPeriod(listener3, listener3.resyncPeriod)
+	// listener 3, never resync
+	listener3 := newTestListener("listener3", "pod1", "pod2")
+	informer.AddEventHandler(ctx, listener3)
 	listeners := []*testListener{listener1, listener2, listener3}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	go informer.Run(stop)
+	go informer.Run(ctx)
 
 	// ensure all listeners got the initial List
 	for _, listener := range listeners {
@@ -133,167 +129,45 @@ func TestListenerResyncPeriods(t *testing.T) {
 			t.Errorf("%s: expected %v, got %v", listener.name, listener.expectedItemNames, listener.receivedItemNames)
 		}
 	}
-
-	// reset
-	for _, listener := range listeners {
-		listener.receivedItemNames = []string{}
-	}
-
-	// advance so listener2 gets a resync
-	clock.Step(2 * time.Second)
-
-	// make sure listener2 got the resync
-	if !listener2.ok() {
-		t.Errorf("%s: expected %v, got %v", listener2.name, listener2.expectedItemNames, listener2.receivedItemNames)
-	}
-
-	// wait a bit to give errant items a chance to go to 1 and 3
-	time.Sleep(1 * time.Second)
-
-	// make sure listeners 1 and 3 got nothing
-	if len(listener1.receivedItemNames) != 0 {
-		t.Errorf("listener1: should not have resynced (got %d)", len(listener1.receivedItemNames))
-	}
-	if len(listener3.receivedItemNames) != 0 {
-		t.Errorf("listener3: should not have resynced (got %d)", len(listener3.receivedItemNames))
-	}
-
-	// reset
-	for _, listener := range listeners {
-		listener.receivedItemNames = []string{}
-	}
-
-	// advance so listener3 gets a resync
-	clock.Step(1 * time.Second)
-
-	// make sure listener3 got the resync
-	if !listener3.ok() {
-		t.Errorf("%s: expected %v, got %v", listener3.name, listener3.expectedItemNames, listener3.receivedItemNames)
-	}
-
-	// wait a bit to give errant items a chance to go to 1 and 2
-	time.Sleep(1 * time.Second)
-
-	// make sure listeners 1 and 2 got nothing
-	if len(listener1.receivedItemNames) != 0 {
-		t.Errorf("listener1: should not have resynced (got %d)", len(listener1.receivedItemNames))
-	}
-	if len(listener2.receivedItemNames) != 0 {
-		t.Errorf("listener2: should not have resynced (got %d)", len(listener2.receivedItemNames))
-	}
-}
-
-func TestResyncCheckPeriod(t *testing.T) {
-	// source simulates an apiserver object endpoint.
-	source := fcache.NewFakeControllerSource()
-
-	// create the shared informer and resync every 12 hours
-	informer := NewSharedInformer(source, &v1.Pod{}, 12*time.Hour).(*sharedIndexInformer)
-
-	clock := testingclock.NewFakeClock(time.Now())
-	informer.clock = clock
-	informer.processor.clock = clock
-
-	// listener 1, never resync
-	listener1 := newTestListener("listener1", 0)
-	informer.AddEventHandlerWithResyncPeriod(listener1, listener1.resyncPeriod)
-	if e, a := 12*time.Hour, informer.resyncCheckPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := time.Duration(0), informer.processor.listeners[0].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-
-	// listener 2, resync every minute
-	listener2 := newTestListener("listener2", 1*time.Minute)
-	informer.AddEventHandlerWithResyncPeriod(listener2, listener2.resyncPeriod)
-	if e, a := 1*time.Minute, informer.resyncCheckPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := time.Duration(0), informer.processor.listeners[0].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 1*time.Minute, informer.processor.listeners[1].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-
-	// listener 3, resync every 55 seconds
-	listener3 := newTestListener("listener3", 55*time.Second)
-	informer.AddEventHandlerWithResyncPeriod(listener3, listener3.resyncPeriod)
-	if e, a := 55*time.Second, informer.resyncCheckPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := time.Duration(0), informer.processor.listeners[0].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 1*time.Minute, informer.processor.listeners[1].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 55*time.Second, informer.processor.listeners[2].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-
-	// listener 4, resync every 5 seconds
-	listener4 := newTestListener("listener4", 5*time.Second)
-	informer.AddEventHandlerWithResyncPeriod(listener4, listener4.resyncPeriod)
-	if e, a := 5*time.Second, informer.resyncCheckPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := time.Duration(0), informer.processor.listeners[0].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 1*time.Minute, informer.processor.listeners[1].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 55*time.Second, informer.processor.listeners[2].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
-	if e, a := 5*time.Second, informer.processor.listeners[3].resyncPeriod; e != a {
-		t.Errorf("expected %d, got %d", e, a)
-	}
 }
 
 // verify that https://github.com/kubernetes/kubernetes/issues/59822 is fixed
 func TestSharedInformerInitializationRace(t *testing.T) {
 	source := fcache.NewFakeControllerSource()
-	informer := NewSharedInformer(source, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
-	listener := newTestListener("raceListener", 0)
+	informer := NewSharedInformer(source, &v1.Pod{}).(*sharedIndexInformer)
+	listener := newTestListener("raceListener")
 
-	stop := make(chan struct{})
-	go informer.AddEventHandlerWithResyncPeriod(listener, listener.resyncPeriod)
-	go informer.Run(stop)
-	close(stop)
+	ctx, cancel := context.WithCancel(context.TODO())
+	go informer.AddEventHandler(ctx, listener)
+	go informer.Run(ctx)
+	cancel()
 }
 
 // TestSharedInformerWatchDisruption simulates a watch that was closed
 // with updates to the store during that time. We ensure that handlers with
 // resync and no resync see the expected state.
 func TestSharedInformerWatchDisruption(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// source simulates an apiserver object endpoint.
 	source := fcache.NewFakeControllerSource()
 
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1", UID: "pod1", ResourceVersion: "1"}})
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "2"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1", UID: "pod1", ResourceVersion: "1"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "2"}})
 
 	// create the shared informer and resync every 1s
-	informer := NewSharedInformer(source, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
-
-	clock := testingclock.NewFakeClock(time.Now())
-	informer.clock = clock
-	informer.processor.clock = clock
+	informer := NewSharedInformer(source, &v1.Pod{}).(*sharedIndexInformer)
 
 	// listener, never resync
-	listenerNoResync := newTestListener("listenerNoResync", 0, "pod1", "pod2")
-	informer.AddEventHandlerWithResyncPeriod(listenerNoResync, listenerNoResync.resyncPeriod)
+	listenerNoResync1 := newTestListener("listenerNoResync1", "pod1", "pod2")
+	informer.AddEventHandler(ctx, listenerNoResync1)
 
-	listenerResync := newTestListener("listenerResync", 1*time.Second, "pod1", "pod2")
-	informer.AddEventHandlerWithResyncPeriod(listenerResync, listenerResync.resyncPeriod)
-	listeners := []*testListener{listenerNoResync, listenerResync}
+	listenerNoResync2 := newTestListener("listenerNoResync2", "pod1", "pod2")
+	informer.AddEventHandler(ctx, listenerNoResync2)
+	listeners := []*testListener{listenerNoResync1, listenerNoResync2}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	go informer.Run(stop)
+	go informer.Run(ctx)
 
 	for _, listener := range listeners {
 		if !listener.ok() {
@@ -302,8 +176,8 @@ func TestSharedInformerWatchDisruption(t *testing.T) {
 	}
 
 	// Add pod3, bump pod2 but don't broadcast it, so that the change will be seen only on relist
-	source.AddDropWatch(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod3", UID: "pod3", ResourceVersion: "3"}})
-	source.ModifyDropWatch(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "4"}})
+	source.AddDropWatch(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod3", UID: "pod3", ResourceVersion: "3"}})
+	source.ModifyDropWatch(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "4"}})
 
 	// Ensure that nobody saw any changes
 	for _, listener := range listeners {
@@ -316,11 +190,8 @@ func TestSharedInformerWatchDisruption(t *testing.T) {
 		listener.receivedItemNames = []string{}
 	}
 
-	listenerNoResync.expectedItemNames = sets.NewString("pod2", "pod3")
-	listenerResync.expectedItemNames = sets.NewString("pod1", "pod2", "pod3")
-
-	// This calls shouldSync, which deletes noResync from the list of syncingListeners
-	clock.Step(1 * time.Second)
+	listenerNoResync1.expectedItemNames = sets.NewString("pod2", "pod3")
+	listenerNoResync2.expectedItemNames = sets.NewString("pod2", "pod3")
 
 	// Simulate a connection loss (or even just a too-old-watch)
 	source.ResetWatch()
@@ -333,19 +204,21 @@ func TestSharedInformerWatchDisruption(t *testing.T) {
 }
 
 func TestSharedInformerErrorHandling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	source := fcache.NewFakeControllerSource()
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1"}})
 	source.ListError = fmt.Errorf("Access Denied")
 
-	informer := NewSharedInformer(source, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
+	informer := NewSharedInformer(source, &v1.Pod{}).(*sharedIndexInformer)
 
 	errCh := make(chan error)
 	_ = informer.SetWatchErrorHandler(func(_ *Reflector, err error) {
 		errCh <- err
 	})
 
-	stop := make(chan struct{})
-	go informer.Run(stop)
+	go informer.Run(ctx)
 
 	select {
 	case err := <-errCh:
@@ -355,17 +228,19 @@ func TestSharedInformerErrorHandling(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Errorf("Timeout waiting for error handler call")
 	}
-	close(stop)
 }
 
 func TestSharedInformerTransformer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// source simulates an apiserver object endpoint.
 	source := fcache.NewFakeControllerSource()
 
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1", UID: "pod1", ResourceVersion: "1"}})
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "2"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1", UID: "pod1", ResourceVersion: "1"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod2", UID: "pod2", ResourceVersion: "2"}})
 
-	informer := NewSharedInformer(source, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
+	informer := NewSharedInformer(source, &v1.Pod{}).(*sharedIndexInformer)
 	informer.SetTransform(func(obj interface{}) (interface{}, error) {
 		if pod, ok := obj.(*v1.Pod); ok {
 			name := pod.GetName()
@@ -379,12 +254,10 @@ func TestSharedInformerTransformer(t *testing.T) {
 		return obj, nil
 	})
 
-	listenerTransformer := newTestListener("listenerTransformer", 0, "POD1", "POD2")
-	informer.AddEventHandler(listenerTransformer)
+	listenerTransformer := newTestListener("listenerTransformer", "POD1", "POD2")
+	informer.AddEventHandler(ctx, listenerTransformer)
 
-	stop := make(chan struct{})
-	go informer.Run(stop)
-	defer close(stop)
+	go informer.Run(ctx)
 
 	if !listenerTransformer.ok() {
 		t.Errorf("%s: expected %v, got %v", listenerTransformer.name, listenerTransformer.expectedItemNames, listenerTransformer.receivedItemNames)

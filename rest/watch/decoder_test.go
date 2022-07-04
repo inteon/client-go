@@ -23,23 +23,29 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	runtimejson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	restclientwatch "k8s.io/client-go/rest/watch"
 )
 
-// getDecoder mimics how k8s.io/client-go/rest.createSerializers creates a decoder
-func getDecoder() runtime.Decoder {
-	jsonSerializer := runtimejson.NewSerializer(runtimejson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, false)
-	directCodecFactory := scheme.Codecs.WithoutConversion()
-	return directCodecFactory.DecoderToVersion(jsonSerializer, v1.SchemeGroupVersion)
+func getDecoder(t testing.TB) runtime.Decoder {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := rest.NewSerializerNegotiator(kubeScheme, false).Decoder(runtime.ContentTypeJSON, nil); err != nil {
+		t.Fatal(err)
+		return nil
+	} else {
+		return d
+	}
 }
 
 func TestDecoder(t *testing.T) {
@@ -48,14 +54,14 @@ func TestDecoder(t *testing.T) {
 	for _, eventType := range table {
 		out, in := io.Pipe()
 
-		decoder := restclientwatch.NewDecoder(streaming.NewDecoder(out, getDecoder()), getDecoder())
+		decoder := restclientwatch.NewDecoder(streaming.NewDecoder(out, getDecoder(t)), getDecoder(t))
 		expect := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
 		encoder := json.NewEncoder(in)
 		eType := eventType
 		errc := make(chan error)
 
 		go func() {
-			data, err := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expect)
+			data, err := runtime.Encode(getEncoder(t), expect)
 			if err != nil {
 				errc <- fmt.Errorf("Unexpected error %v", err)
 				return
@@ -108,7 +114,7 @@ func TestDecoder(t *testing.T) {
 
 func TestDecoder_SourceClose(t *testing.T) {
 	out, in := io.Pipe()
-	decoder := restclientwatch.NewDecoder(streaming.NewDecoder(out, getDecoder()), getDecoder())
+	decoder := restclientwatch.NewDecoder(streaming.NewDecoder(out, getDecoder(t)), getDecoder(t))
 
 	done := make(chan struct{})
 

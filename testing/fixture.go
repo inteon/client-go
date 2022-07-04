@@ -33,7 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	restclient "k8s.io/client-go/rest"
 )
 
@@ -65,7 +65,7 @@ type ObjectTracker interface {
 
 	// Watch watches objects from the tracker. Watch returns a channel
 	// which will push added / modified / deleted object.
-	Watch(gvr schema.GroupVersionResource, ns string) (watch.Interface, error)
+	Watch(gvr schema.GroupVersionResource, ns string) (watch.Watcher, error)
 }
 
 // ObjectScheme abstracts the implementation of common operations on objects.
@@ -205,7 +205,7 @@ type tracker struct {
 	// Manipulations on resources will broadcast the notification events into the
 	// watchers' channel. Note that too many unhandled events (currently 100,
 	// see apimachinery/pkg/watch.DefaultChanSize) will cause a panic.
-	watchers map[schema.GroupVersionResource]map[string][]*watch.RaceFreeFakeWatcher
+	watchers map[schema.GroupVersionResource]map[string][]*watch.BoundedWatcher
 }
 
 var _ ObjectTracker = &tracker{}
@@ -217,7 +217,7 @@ func NewObjectTracker(scheme ObjectScheme, decoder runtime.Decoder) ObjectTracke
 		scheme:   scheme,
 		decoder:  decoder,
 		objects:  make(map[schema.GroupVersionResource]map[types.NamespacedName]runtime.Object),
-		watchers: make(map[schema.GroupVersionResource]map[string][]*watch.RaceFreeFakeWatcher),
+		watchers: make(map[schema.GroupVersionResource]map[string][]*watch.BoundedWatcher),
 	}
 }
 
@@ -260,14 +260,14 @@ func (t *tracker) List(gvr schema.GroupVersionResource, gvk schema.GroupVersionK
 	return list.DeepCopyObject(), nil
 }
 
-func (t *tracker) Watch(gvr schema.GroupVersionResource, ns string) (watch.Interface, error) {
+func (t *tracker) Watch(gvr schema.GroupVersionResource, ns string) (watch.Watcher, error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	fakewatcher := watch.NewRaceFreeFake()
+	fakewatcher := watch.NewBoundedWatcher()
 
 	if _, exists := t.watchers[gvr]; !exists {
-		t.watchers[gvr] = make(map[string][]*watch.RaceFreeFakeWatcher)
+		t.watchers[gvr] = make(map[string][]*watch.BoundedWatcher)
 	}
 	t.watchers[gvr][ns] = append(t.watchers[gvr][ns], fakewatcher)
 	return fakewatcher, nil
@@ -350,8 +350,8 @@ func (t *tracker) Update(gvr schema.GroupVersionResource, obj runtime.Object, ns
 	return t.add(gvr, obj, ns, true)
 }
 
-func (t *tracker) getWatches(gvr schema.GroupVersionResource, ns string) []*watch.RaceFreeFakeWatcher {
-	watches := []*watch.RaceFreeFakeWatcher{}
+func (t *tracker) getWatches(gvr schema.GroupVersionResource, ns string) []*watch.BoundedWatcher {
+	watches := []*watch.BoundedWatcher{}
 	if t.watchers[gvr] != nil {
 		if w := t.watchers[gvr][ns]; w != nil {
 			watches = append(watches, w...)
@@ -401,7 +401,7 @@ func (t *tracker) add(gvr schema.GroupVersionResource, obj runtime.Object, ns st
 		if replaceExisting {
 			for _, w := range t.getWatches(gvr, ns) {
 				// To avoid the object from being accidentally modified by watcher
-				w.Modify(obj.DeepCopyObject())
+				w.TryModify(obj.DeepCopyObject())
 			}
 			t.objects[gvr][namespacedName] = obj
 			return nil
@@ -418,7 +418,7 @@ func (t *tracker) add(gvr schema.GroupVersionResource, obj runtime.Object, ns st
 
 	for _, w := range t.getWatches(gvr, ns) {
 		// To avoid the object from being accidentally modified by watcher
-		w.Add(obj.DeepCopyObject())
+		w.TryAdd(obj.DeepCopyObject())
 	}
 
 	return nil
@@ -458,7 +458,7 @@ func (t *tracker) Delete(gvr schema.GroupVersionResource, ns, name string) error
 
 	delete(objs, namespacedName)
 	for _, w := range t.getWatches(gvr, ns) {
-		w.Delete(obj.DeepCopyObject())
+		w.TryDelete(obj.DeepCopyObject())
 	}
 	return nil
 }
@@ -492,8 +492,8 @@ func filterByNamespace(objs map[types.NamespacedName]runtime.Object, ns string) 
 	return res, nil
 }
 
-func DefaultWatchReactor(watchInterface watch.Interface, err error) WatchReactionFunc {
-	return func(action Action) (bool, watch.Interface, error) {
+func DefaultWatchReactor(watchInterface watch.Watcher, err error) WatchReactionFunc {
+	return func(action Action) (bool, watch.Watcher, error) {
 		return true, watchInterface, err
 	}
 }
@@ -532,7 +532,7 @@ func (r *SimpleWatchReactor) Handles(action Action) bool {
 	return resourceCovers(r.Resource, action)
 }
 
-func (r *SimpleWatchReactor) React(action Action) (bool, watch.Interface, error) {
+func (r *SimpleWatchReactor) React(action Action) (bool, watch.Watcher, error) {
 	return r.Reaction(action)
 }
 

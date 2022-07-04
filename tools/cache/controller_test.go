@@ -17,22 +17,23 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	fcache "k8s.io/client-go/tools/cache/testing"
 
-	"github.com/google/gofuzz"
+	fuzz "github.com/google/gofuzz"
 )
 
 func Example() {
@@ -45,39 +46,37 @@ func Example() {
 	// This will hold incoming changes. Note how we pass downstream in as a
 	// KeyLister, that way resync operations will result in the correct set
 	// of update/delete deltas.
-	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
-		KeyFunction:  MetaNamespaceKeyFunc,
-		KnownObjects: downstream,
-	})
+	fifo := NewDeltaFIFO(
+		KeyFunctionQueueOption(MetaNamespaceKeyFunc),
+		KnownObjectsQueueOption(downstream),
+	)
 
 	// Let's do threadsafe output to get predictable test results.
 	deletionCounter := make(chan string, 1000)
 
 	cfg := &Config{
-		Queue:            fifo,
-		ListerWatcher:    source,
-		ObjectType:       &v1.Pod{},
-		FullResyncPeriod: time.Millisecond * 100,
-		RetryOnError:     false,
+		Queue:         fifo,
+		ListerWatcher: source,
+		ObjectType:    &v1.Pod{},
 
 		// Let's implement a simple controller that just deletes
 		// everything that comes in.
-		Process: func(obj interface{}) error {
+		Process: func(ctx context.Context, obj interface{}) error {
 			// Obj is from the Pop method of the Queue we make above.
 			newest := obj.(Deltas).Newest()
 
 			if newest.Type != Deleted {
 				// Update our downstream store.
-				err := downstream.Add(newest.Object)
+				err := downstream.Add(ctx, newest.Object)
 				if err != nil {
 					return err
 				}
 
 				// Delete this object.
-				source.Delete(newest.Object.(runtime.Object))
+				source.Delete(ctx, newest.Object.(runtime.Object))
 			} else {
 				// Update our downstream store.
-				err := downstream.Delete(newest.Object)
+				err := downstream.Delete(ctx, newest.Object)
 				if err != nil {
 					return err
 				}
@@ -97,16 +96,16 @@ func Example() {
 	}
 
 	// Create the controller and run it until we close stop.
-	stop := make(chan struct{})
-	defer close(stop)
-	go New(cfg).Run(stop)
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	go New(cfg).Run(ctx)
 
 	// Let's add a few objects to the source.
 	testIDs := []string{"a-hello", "b-controller", "c-framework"}
 	for _, name := range testIDs {
 		// Note that these pods are not valid-- the fake source doesn't
 		// call validation or anything.
-		source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}})
+		source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	}
 
 	// Let's wait for the controller to process the things we just added.
@@ -136,12 +135,11 @@ func ExampleNewInformer() {
 	_, controller := NewInformer(
 		source,
 		&v1.Pod{},
-		time.Millisecond*100,
 		ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				source.Delete(obj.(runtime.Object))
+			AddFunc: func(ctx context.Context, obj interface{}) {
+				source.Delete(ctx, obj.(runtime.Object))
 			},
-			DeleteFunc: func(obj interface{}) {
+			DeleteFunc: func(ctx context.Context, obj interface{}) {
 				key, err := DeletionHandlingMetaNamespaceKeyFunc(obj)
 				if err != nil {
 					key = "oops something went wrong with the key"
@@ -154,16 +152,16 @@ func ExampleNewInformer() {
 	)
 
 	// Run the controller and run it until we close stop.
-	stop := make(chan struct{})
-	defer close(stop)
-	go controller.Run(stop)
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	go controller.Run(ctx)
 
 	// Let's add a few objects to the source.
 	testIDs := []string{"a-hello", "b-controller", "c-framework"}
 	for _, name := range testIDs {
 		// Note that these pods are not valid-- the fake source doesn't
 		// call validation or anything.
-		source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}})
+		source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	}
 
 	// Let's wait for the controller to process the things we just added.
@@ -212,29 +210,25 @@ func TestHammerController(t *testing.T) {
 	_, controller := NewInformer(
 		source,
 		&v1.Pod{},
-		time.Millisecond*100,
 		ResourceEventHandlerFuncs{
-			AddFunc:    func(obj interface{}) { recordFunc("add", obj) },
-			UpdateFunc: func(oldObj, newObj interface{}) { recordFunc("update", newObj) },
-			DeleteFunc: func(obj interface{}) { recordFunc("delete", obj) },
+			AddFunc:    func(ctx context.Context, obj interface{}) { recordFunc("add", obj) },
+			UpdateFunc: func(ctx context.Context, oldObj, newObj interface{}) { recordFunc("update", newObj) },
+			DeleteFunc: func(ctx context.Context, obj interface{}) { recordFunc("delete", obj) },
 		},
 	)
 
-	if controller.HasSynced() {
+	select {
+	case <-controller.HasSynced():
 		t.Errorf("Expected HasSynced() to return false before we started the controller")
+	default:
 	}
 
 	// Run the controller and run it until we close stop.
-	stop := make(chan struct{})
-	go controller.Run(stop)
+	ctx, cancel := context.WithCancel(context.TODO())
+	go controller.Run(ctx)
 
 	// Let's wait for the controller to do its initial sync
-	wait.Poll(100*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
-		return controller.HasSynced(), nil
-	})
-	if !controller.HasSynced() {
-		t.Errorf("Expected HasSynced() to return true after the initial sync")
-	}
+	<-controller.HasSynced()
 
 	wg := sync.WaitGroup{}
 	const threads = 3
@@ -266,16 +260,16 @@ func TestHammerController(t *testing.T) {
 				// call validation or perform any other checking.
 				if isNew {
 					currentNames.Insert(name)
-					source.Add(pod)
+					source.Add(ctx, pod)
 					continue
 				}
 				switch rand.Intn(2) {
 				case 0:
 					currentNames.Insert(name)
-					source.Modify(pod)
+					source.Modify(ctx, pod)
 				case 1:
 					currentNames.Delete(name)
-					source.Delete(pod)
+					source.Delete(ctx, pod)
 				}
 			}
 		}()
@@ -285,7 +279,7 @@ func TestHammerController(t *testing.T) {
 	// Let's wait for the controller to finish processing the things we just added.
 	// TODO: look in the queue to see how many items need to be processed.
 	time.Sleep(100 * time.Millisecond)
-	close(stop)
+	cancel()
 
 	// TODO: Verify that no goroutines were leaked here and that everything shut
 	// down cleanly.
@@ -295,6 +289,9 @@ func TestHammerController(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// This test is going to exercise the various paths that result in a
 	// call to update.
 
@@ -338,8 +335,8 @@ func TestUpdate(t *testing.T) {
 	tests := []func(string){
 		func(name string) {
 			name = "a-" + name
-			source.Add(pod(name, FROM, false))
-			source.Modify(pod(name, TO, true))
+			source.Add(ctx, pod(name, FROM, false))
+			source.Modify(ctx, pod(name, TO, true))
 		},
 	}
 
@@ -354,29 +351,28 @@ func TestUpdate(t *testing.T) {
 	watchCh := make(chan struct{})
 	_, controller := NewInformer(
 		&testLW{
-			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-				watch, err := source.Watch(options)
+			WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+				watch, err := source.Watch(ctx, options)
 				close(watchCh)
 				return watch, err
 			},
-			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-				return source.List(options)
+			ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+				return source.List(ctx, options)
 			},
 		},
 		&v1.Pod{},
-		0,
 		ResourceEventHandlerFuncs{
-			UpdateFunc: func(oldObj, newObj interface{}) {
+			UpdateFunc: func(ctx context.Context, oldObj, newObj interface{}) {
 				o, n := oldObj.(*v1.Pod), newObj.(*v1.Pod)
 				from, to := o.Labels["check"], n.Labels["check"]
 				if !allowedTransitions[pair{from, to}] {
 					t.Errorf("observed transition %q -> %q for %v", from, to, n.Name)
 				}
 				if deletePod(n) {
-					source.Delete(n)
+					source.Delete(ctx, n)
 				}
 			},
-			DeleteFunc: func(obj interface{}) {
+			DeleteFunc: func(ctx context.Context, obj interface{}) {
 				testDoneWG.Done()
 			},
 		},
@@ -385,8 +381,7 @@ func TestUpdate(t *testing.T) {
 	// Run the controller and run it until we close stop.
 	// Once Run() is called, calls to testDoneWG.Done() might start, so
 	// all testDoneWG.Add() calls must happen before this point
-	stop := make(chan struct{})
-	go controller.Run(stop)
+	go controller.Run(ctx)
 	<-watchCh
 
 	// run every test a few times, in parallel
@@ -404,7 +399,6 @@ func TestUpdate(t *testing.T) {
 
 	// Let's wait for the controller to process the things we just added.
 	testDoneWG.Wait()
-	close(stop)
 }
 
 func TestPanicPropagated(t *testing.T) {
@@ -415,9 +409,8 @@ func TestPanicPropagated(t *testing.T) {
 	_, controller := NewInformer(
 		source,
 		&v1.Pod{},
-		time.Millisecond*100,
 		ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
+			AddFunc: func(ctx context.Context, obj interface{}) {
 				// Create a panic.
 				panic("Just panic.")
 			},
@@ -425,8 +418,8 @@ func TestPanicPropagated(t *testing.T) {
 	)
 
 	// Run the controller and run it until we close stop.
-	stop := make(chan struct{})
-	defer close(stop)
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 
 	propagated := make(chan interface{})
 	go func() {
@@ -435,10 +428,10 @@ func TestPanicPropagated(t *testing.T) {
 				propagated <- r
 			}
 		}()
-		controller.Run(stop)
+		controller.Run(ctx)
 	}()
 	// Let's add a object to the source. It will trigger a panic.
-	source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}})
+	source.Add(ctx, &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}})
 
 	// Check if the panic propagated up.
 	select {
@@ -454,6 +447,9 @@ func TestPanicPropagated(t *testing.T) {
 }
 
 func TestTransformingInformer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// source simulates an apiserver object endpoint.
 	source := fcache.NewFakeControllerSource()
 
@@ -478,8 +474,8 @@ func TestTransformingInformer(t *testing.T) {
 		return pod
 	}
 
-	source.Add(makePod("pod1", "1"))
-	source.Modify(makePod("pod1", "2"))
+	source.Add(ctx, makePod("pod1", "1"))
+	source.Modify(ctx, makePod("pod1", "2"))
 
 	type event struct {
 		eventType watch.EventType
@@ -525,11 +521,10 @@ func TestTransformingInformer(t *testing.T) {
 	store, controller := NewTransformingInformer(
 		source,
 		&v1.Pod{},
-		0,
 		ResourceEventHandlerFuncs{
-			AddFunc:    func(obj interface{}) { recordEvent(watch.Added, nil, obj) },
-			UpdateFunc: func(oldObj, newObj interface{}) { recordEvent(watch.Modified, oldObj, newObj) },
-			DeleteFunc: func(obj interface{}) { recordEvent(watch.Deleted, obj, nil) },
+			AddFunc:    func(ctx context.Context, obj interface{}) { recordEvent(watch.Added, nil, obj) },
+			UpdateFunc: func(ctx context.Context, oldObj, newObj interface{}) { recordEvent(watch.Modified, oldObj, newObj) },
+			DeleteFunc: func(ctx context.Context, obj interface{}) { recordEvent(watch.Deleted, obj, nil) },
 		},
 		podTransformer,
 	)
@@ -552,25 +547,22 @@ func TestTransformingInformer(t *testing.T) {
 		}
 	}
 
-	stopCh := make(chan struct{})
-	go controller.Run(stopCh)
+	go controller.Run(ctx)
 
 	verifyEvent(watch.Added, nil, expectedPod("pod1", "2"))
 	verifyStore([]interface{}{expectedPod("pod1", "2")})
 
-	source.Add(makePod("pod2", "1"))
+	source.Add(ctx, makePod("pod2", "1"))
 	verifyEvent(watch.Added, nil, expectedPod("pod2", "1"))
 	verifyStore([]interface{}{expectedPod("pod1", "2"), expectedPod("pod2", "1")})
 
-	source.Add(makePod("pod3", "1"))
+	source.Add(ctx, makePod("pod3", "1"))
 	verifyEvent(watch.Added, nil, expectedPod("pod3", "1"))
 
-	source.Modify(makePod("pod2", "2"))
+	source.Modify(ctx, makePod("pod2", "2"))
 	verifyEvent(watch.Modified, expectedPod("pod2", "1"), expectedPod("pod2", "2"))
 
-	source.Delete(makePod("pod1", "2"))
+	source.Delete(ctx, makePod("pod1", "2"))
 	verifyEvent(watch.Deleted, expectedPod("pod1", "2"), nil)
 	verifyStore([]interface{}{expectedPod("pod2", "2"), expectedPod("pod3", "1")})
-
-	close(stopCh)
 }

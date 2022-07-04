@@ -33,11 +33,11 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedv1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	typedeventsv1 "k8s.io/client-go/kubernetes/typed/events/v1"
+	"k8s.io/client-go/pkg/watch"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/tools/record/util"
@@ -64,7 +64,7 @@ type eventKey struct {
 }
 
 type eventBroadcasterImpl struct {
-	*watch.Broadcaster
+	*watch.BoundedWatcher
 	mu            sync.Mutex
 	eventCache    map[eventKey]*eventsv1.Event
 	sleepDuration time.Duration
@@ -110,15 +110,11 @@ func NewBroadcaster(sink EventSink) EventBroadcaster {
 // NewBroadcasterForTest Creates a new event broadcaster for test purposes.
 func newBroadcaster(sink EventSink, sleepDuration time.Duration, eventCache map[eventKey]*eventsv1.Event) EventBroadcaster {
 	return &eventBroadcasterImpl{
-		Broadcaster:   watch.NewBroadcaster(maxQueuedEvents, watch.DropIfChannelFull),
-		eventCache:    eventCache,
-		sleepDuration: sleepDuration,
-		sink:          sink,
+		BoundedWatcher: watch.NewBoundedWatcherWithSize(maxQueuedEvents),
+		eventCache:     eventCache,
+		sleepDuration:  sleepDuration,
+		sink:           sink,
 	}
-}
-
-func (e *eventBroadcasterImpl) Shutdown() {
-	e.Broadcaster.Shutdown()
 }
 
 // refreshExistingEventSeries refresh events TTL
@@ -162,7 +158,7 @@ func (e *eventBroadcasterImpl) finishSeries() {
 func (e *eventBroadcasterImpl) NewRecorder(scheme *runtime.Scheme, reportingController string) EventRecorder {
 	hostname, _ := os.Hostname()
 	reportingInstance := reportingController + "-" + hostname
-	return &recorderImpl{scheme, reportingController, reportingInstance, e.Broadcaster, clock.RealClock{}}
+	return &recorderImpl{scheme, reportingController, reportingInstance, e.BoundedWatcher, clock.RealClock{}}
 }
 
 func (e *eventBroadcasterImpl) recordToSink(event *eventsv1.Event, clock clock.Clock) {
@@ -329,7 +325,7 @@ func (e *eventBroadcasterImpl) StartEventWatcher(eventHandler func(event runtime
 	return watcher.Stop
 }
 
-func (e *eventBroadcasterImpl) startRecordingEvents(stopCh <-chan struct{}) {
+func (e *eventBroadcasterImpl) startRecordingEvents(ctx context.Context) {
 	eventHandler := func(obj runtime.Object) {
 		event, ok := obj.(*eventsv1.Event)
 		if !ok {
@@ -340,16 +336,16 @@ func (e *eventBroadcasterImpl) startRecordingEvents(stopCh <-chan struct{}) {
 	}
 	stopWatcher := e.StartEventWatcher(eventHandler)
 	go func() {
-		<-stopCh
+		<-ctx.Done()
 		stopWatcher()
 	}()
 }
 
 // StartRecordingToSink starts sending events received from the specified eventBroadcaster to the given sink.
-func (e *eventBroadcasterImpl) StartRecordingToSink(stopCh <-chan struct{}) {
-	go wait.Until(e.refreshExistingEventSeries, refreshTime, stopCh)
-	go wait.Until(e.finishSeries, finishTime, stopCh)
-	e.startRecordingEvents(stopCh)
+func (e *eventBroadcasterImpl) StartRecordingToSink(ctx context.Context) {
+	go wait.Until(e.refreshExistingEventSeries, refreshTime, ctx.Done())
+	go wait.Until(e.finishSeries, finishTime, ctx.Done())
+	e.startRecordingEvents(ctx)
 }
 
 type eventBroadcasterAdapterImpl struct {
@@ -363,7 +359,7 @@ type eventBroadcasterAdapterImpl struct {
 // migration of individual components to the new Event API.
 func NewEventBroadcasterAdapter(client clientset.Interface) EventBroadcasterAdapter {
 	eventClient := &eventBroadcasterAdapterImpl{}
-	if _, err := client.Discovery().ServerResourcesForGroupVersion(eventsv1.SchemeGroupVersion.String()); err == nil {
+	if _, err := client.Discovery().ApiResources(context.TODO(), eventsv1.SchemeGroupVersion); err == nil {
 		eventClient.eventsv1Client = client.EventsV1()
 		eventClient.eventsv1Broadcaster = NewBroadcaster(&EventSinkImpl{Interface: eventClient.eventsv1Client})
 	}
@@ -376,9 +372,9 @@ func NewEventBroadcasterAdapter(client clientset.Interface) EventBroadcasterAdap
 }
 
 // StartRecordingToSink starts sending events received from the specified eventBroadcaster to the given sink.
-func (e *eventBroadcasterAdapterImpl) StartRecordingToSink(stopCh <-chan struct{}) {
+func (e *eventBroadcasterAdapterImpl) StartRecordingToSink(ctx context.Context) {
 	if e.eventsv1Broadcaster != nil && e.eventsv1Client != nil {
-		e.eventsv1Broadcaster.StartRecordingToSink(stopCh)
+		e.eventsv1Broadcaster.StartRecordingToSink(ctx)
 	}
 	if e.coreBroadcaster != nil && e.coreClient != nil {
 		e.coreBroadcaster.StartRecordingToSink(&typedv1core.EventSinkImpl{Interface: e.coreClient.Events("")})

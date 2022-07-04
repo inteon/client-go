@@ -17,6 +17,7 @@ limitations under the License.
 package events
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -27,12 +28,21 @@ import (
 	v1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	restclient "k8s.io/client-go/rest"
 	ref "k8s.io/client-go/tools/reference"
 )
+
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	return kubeScheme
+}
 
 type testEventSeriesSink struct {
 	OnCreate func(e *eventsv1.Event) (*eventsv1.Event, error)
@@ -75,12 +85,12 @@ func TestEventSeriesf(t *testing.T) {
 		},
 	}
 
-	regarding, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[1]")
+	regarding, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[1]")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	related, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[0]")
+	related, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[0]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +143,7 @@ func TestEventSeriesf(t *testing.T) {
 		},
 	}
 
-	stopCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.TODO())
 
 	createEvent := make(chan *eventsv1.Event)
 	updateEvent := make(chan *eventsv1.Event)
@@ -156,12 +166,12 @@ func TestEventSeriesf(t *testing.T) {
 		},
 	}
 	eventBroadcaster := newBroadcaster(&testEvents, 0, map[eventKey]*eventsv1.Event{})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, "eventTest")
+	recorder := eventBroadcaster.NewRecorder(newKubeScheme(t), "eventTest")
 	broadcaster := eventBroadcaster.(*eventBroadcasterImpl)
 	// Don't call StartRecordingToSink, as we don't need neither refreshing event
 	// series nor finishing them in this tests and additional events updated would
 	// race with our expected ones.
-	broadcaster.startRecordingEvents(stopCh)
+	broadcaster.startRecordingEvents(ctx)
 	recorder.Eventf(regarding, related, isomorphicEvent.Type, isomorphicEvent.Reason, isomorphicEvent.Action, isomorphicEvent.Note, []interface{}{1})
 	// read from the chan as this was needed only to populate the cache
 	<-createEvent
@@ -179,7 +189,7 @@ func TestEventSeriesf(t *testing.T) {
 			validateEvent(strconv.Itoa(index), false, actualEvent, item.expect, t)
 		}
 	}
-	close(stopCh)
+	cancel()
 }
 
 func validateEvent(messagePrefix string, expectedUpdate bool, actualEvent *eventsv1.Event, expectedEvent *eventsv1.Event, t *testing.T) {
@@ -221,11 +231,11 @@ func TestFinishSeries(t *testing.T) {
 			UID:       "bar",
 		},
 	}
-	regarding, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[1]")
+	regarding, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[1]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	related, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[0]")
+	related, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[0]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +262,7 @@ func TestFinishSeries(t *testing.T) {
 	}
 	cache := map[eventKey]*eventsv1.Event{}
 	eventBroadcaster := newBroadcaster(&testEvents, 0, cache).(*eventBroadcasterImpl)
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, "k8s.io/kube-foo").(*recorderImpl)
+	recorder := eventBroadcaster.NewRecorder(newKubeScheme(t), "k8s.io/kube-foo").(*recorderImpl)
 	cachedEvent := recorder.makeEvent(regarding, related, metav1.MicroTime{time.Now()}, v1.EventTypeNormal, "test", "some verbose message: 1", "eventTest", "eventTest-"+hostname, "started")
 	nonFinishedEvent := cachedEvent.DeepCopy()
 	nonFinishedEvent.ReportingController = "nonFinished-controller"
@@ -292,11 +302,11 @@ func TestRefreshExistingEventSeries(t *testing.T) {
 			UID:       "bar",
 		},
 	}
-	regarding, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[1]")
+	regarding, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[1]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	related, err := ref.GetPartialReference(scheme.Scheme, testPod, ".spec.containers[0]")
+	related, err := ref.GetPartialReference(newKubeScheme(t), testPod, ".spec.containers[0]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +348,7 @@ func TestRefreshExistingEventSeries(t *testing.T) {
 		}
 		cache := map[eventKey]*eventsv1.Event{}
 		eventBroadcaster := newBroadcaster(&testEvents, 0, cache).(*eventBroadcasterImpl)
-		recorder := eventBroadcaster.NewRecorder(scheme.Scheme, "k8s.io/kube-foo").(*recorderImpl)
+		recorder := eventBroadcaster.NewRecorder(newKubeScheme(t), "k8s.io/kube-foo").(*recorderImpl)
 		cachedEvent := recorder.makeEvent(regarding, related, metav1.MicroTime{time.Now()}, v1.EventTypeNormal, "test", "some verbose message: 1", "eventTest", "eventTest-"+hostname, "started")
 		cachedEvent.Series = &eventsv1.EventSeries{
 			Count:            10,

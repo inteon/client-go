@@ -24,7 +24,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -53,9 +54,10 @@ var ErrWatchClosed = errors.New("watch closed before UntilWithoutRetry timeout")
 // Warning: You are most probably looking for a function *Until* or *UntilWithSync* below,
 // Warning: solving such issues.
 // TODO: Consider making this function private to prevent misuse when the other occurrences in our codebase are gone.
-func UntilWithoutRetry(ctx context.Context, watcher watch.Interface, conditions ...ConditionFunc) (*watch.Event, error) {
-	ch := watcher.ResultChan()
-	defer watcher.Stop()
+func UntilWithoutRetry(ctx context.Context, watcher watch.Watcher, conditions ...ConditionFunc) (*watch.Event, error) {
+	resultCh, ctx, cancel := concurrent.Watch(ctx, watcher)
+	defer cancel()
+
 	var lastEvent *watch.Event
 	for _, condition := range conditions {
 		// check the next condition against the previous event and short circuit waiting for the next watch
@@ -71,7 +73,7 @@ func UntilWithoutRetry(ctx context.Context, watcher watch.Interface, conditions 
 	ConditionSucceeded:
 		for {
 			select {
-			case event, ok := <-ch:
+			case event, ok := <-resultCh:
 				if !ok {
 					return lastEvent, ErrWatchClosed
 				}
@@ -90,6 +92,7 @@ func UntilWithoutRetry(ctx context.Context, watcher watch.Interface, conditions 
 			}
 		}
 	}
+
 	return lastEvent, nil
 }
 
@@ -125,16 +128,16 @@ func Until(ctx context.Context, initialResourceVersion string, watcherClient cac
 // The most frequent usage would be a command that needs to watch the "state of the world" and should't fail, like:
 // waiting for object reaching a state, "small" controllers, ...
 func UntilWithSync(ctx context.Context, lw cache.ListerWatcher, objType runtime.Object, precondition PreconditionFunc, conditions ...ConditionFunc) (*watch.Event, error) {
-	indexer, informer, watcher, done := NewIndexerInformerWatcher(lw, objType)
-	// We need to wait for the internal informers to fully stop so it's easier to reason about
-	// and it works with non-thread safe clients.
-	defer func() { <-done }()
-	// Proxy watcher can be stopped multiple times so it's fine to use defer here to cover alternative branches and
-	// let UntilWithoutRetry to stop it
-	defer watcher.Stop()
+	indexer, informer, watcher := NewIndexerInformerWatcher(lw, objType)
+
+	// Wait for informer to complete before returning
+	ctx, cancel := concurrent.Complete(ctx, func(ctx context.Context) {
+		informer.Run(ctx)
+	})
+	defer cancel()
 
 	if precondition != nil {
-		if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
+		if !cache.WaitForCacheSync(ctx, informer.HasSynced) {
 			return nil, fmt.Errorf("UntilWithSync: unable to sync caches: %v", ctx.Err())
 		}
 

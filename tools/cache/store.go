@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -37,15 +38,19 @@ import (
 // Reflector knows how to watch a server and update a Store.  This
 // package provides a variety of implementations of Store.
 type Store interface {
-
 	// Add adds the given object to the accumulator associated with the given object's key
-	Add(obj interface{}) error
+	Add(ctx context.Context, obj interface{}) error
 
 	// Update updates the given object in the accumulator associated with the given object's key
-	Update(obj interface{}) error
+	Update(ctx context.Context, obj interface{}) error
 
 	// Delete deletes the given object from the accumulator associated with the given object's key
-	Delete(obj interface{}) error
+	Delete(ctx context.Context, obj interface{}) error
+
+	// Replace will delete the contents of the store, using instead the
+	// given list. Store takes ownership of the list, you should not reference
+	// it after calling this function.
+	Replace(context.Context, []interface{}, string) error
 
 	// List returns a list of all the currently non-empty accumulators
 	List() []interface{}
@@ -58,16 +63,6 @@ type Store interface {
 
 	// GetByKey returns the accumulator associated with the given key
 	GetByKey(key string) (item interface{}, exists bool, err error)
-
-	// Replace will delete the contents of the store, using instead the
-	// given list. Store takes ownership of the list, you should not reference
-	// it after calling this function.
-	Replace([]interface{}, string) error
-
-	// Resync is meaningless in the terms appearing here but has
-	// meaning in some implementations that have non-trivial
-	// additional behavior (e.g., DeltaFIFO).
-	Resync() error
 }
 
 // KeyFunc knows how to make a key from an object. Implementations should be deterministic.
@@ -147,33 +142,45 @@ type cache struct {
 var _ Store = &cache{}
 
 // Add inserts an item into the cache.
-func (c *cache) Add(obj interface{}) error {
+func (c *cache) Add(_ context.Context, obj interface{}) error {
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
-	c.cacheStorage.Add(key, obj)
-	return nil
+	return c.cacheStorage.Add(key, obj)
 }
 
 // Update sets an item in the cache to its updated state.
-func (c *cache) Update(obj interface{}) error {
+func (c *cache) Update(_ context.Context, obj interface{}) error {
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
-	c.cacheStorage.Update(key, obj)
-	return nil
+	return c.cacheStorage.Update(key, obj)
 }
 
 // Delete removes an item from the cache.
-func (c *cache) Delete(obj interface{}) error {
+func (c *cache) Delete(_ context.Context, obj interface{}) error {
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
-	c.cacheStorage.Delete(key)
-	return nil
+	return c.cacheStorage.Delete(key)
+}
+
+// Replace will delete the contents of 'c', using instead the given list.
+// 'c' takes ownership of the list, you should not reference the list again
+// after calling this function.
+func (c *cache) Replace(_ context.Context, list []interface{}, resourceVersion string) error {
+	items := make(map[string]interface{}, len(list))
+	for _, item := range list {
+		key, err := c.keyFunc(item)
+		if err != nil {
+			return KeyError{item, err}
+		}
+		items[key] = item
+	}
+	return c.cacheStorage.Replace(items, resourceVersion)
 }
 
 // List returns a list of all the items.
@@ -233,31 +240,10 @@ func (c *cache) GetByKey(key string) (item interface{}, exists bool, err error) 
 	return item, exists, nil
 }
 
-// Replace will delete the contents of 'c', using instead the given list.
-// 'c' takes ownership of the list, you should not reference the list again
-// after calling this function.
-func (c *cache) Replace(list []interface{}, resourceVersion string) error {
-	items := make(map[string]interface{}, len(list))
-	for _, item := range list {
-		key, err := c.keyFunc(item)
-		if err != nil {
-			return KeyError{item, err}
-		}
-		items[key] = item
-	}
-	c.cacheStorage.Replace(items, resourceVersion)
-	return nil
-}
-
-// Resync is meaningless for one of these
-func (c *cache) Resync() error {
-	return nil
-}
-
 // NewStore returns a Store implemented simply with a map and a lock.
 func NewStore(keyFunc KeyFunc) Store {
 	return &cache{
-		cacheStorage: NewThreadSafeStore(Indexers{}, Indices{}),
+		cacheStorage: NewThreadSafeStore(Indexers{}),
 		keyFunc:      keyFunc,
 	}
 }
@@ -265,7 +251,7 @@ func NewStore(keyFunc KeyFunc) Store {
 // NewIndexer returns an Indexer implemented simply with a map and a lock.
 func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {
 	return &cache{
-		cacheStorage: NewThreadSafeStore(indexers, Indices{}),
+		cacheStorage: NewThreadSafeStore(indexers),
 		keyFunc:      keyFunc,
 	}
 }

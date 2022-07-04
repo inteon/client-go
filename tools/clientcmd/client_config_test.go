@@ -560,7 +560,6 @@ func TestCreateClean(t *testing.T) {
 	}
 
 	matchStringArg(config.Clusters["clean"].Server, clientConfig.Host, t)
-	matchStringArg("", clientConfig.APIPath, t)
 	matchBoolArg(config.Clusters["clean"].InsecureSkipTLSVerify, clientConfig.Insecure, t)
 	matchStringArg(config.AuthInfos["clean"].Token, clientConfig.BearerToken, t)
 	matchStringArg(config.Clusters["clean"].TLSServerName, clientConfig.ServerName, t)

@@ -31,8 +31,6 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -44,7 +42,7 @@ type tcpLB struct {
 	dials     int32
 }
 
-func (lb *tcpLB) handleConnection(in net.Conn, stopCh chan struct{}) {
+func (lb *tcpLB) handleConnection(in net.Conn, ctx context.Context) {
 	out, err := net.Dial("tcp", lb.serverURL)
 	if err != nil {
 		lb.t.Log(err)
@@ -52,19 +50,19 @@ func (lb *tcpLB) handleConnection(in net.Conn, stopCh chan struct{}) {
 	}
 	go io.Copy(out, in)
 	go io.Copy(in, out)
-	<-stopCh
+	<-ctx.Done()
 	if err := out.Close(); err != nil {
 		lb.t.Fatalf("failed to close connection: %v", err)
 	}
 }
 
-func (lb *tcpLB) serve(stopCh chan struct{}) {
+func (lb *tcpLB) serve(ctx context.Context) {
 	conn, err := lb.ln.Accept()
 	if err != nil {
 		lb.t.Fatalf("failed to accept: %v", err)
 	}
 	atomic.AddInt32(&lb.dials, 1)
-	go lb.handleConnection(conn, stopCh)
+	lb.handleConnection(conn, ctx)
 }
 
 func newLB(t *testing.T, serverURL string) *tcpLB {
@@ -110,8 +108,8 @@ func TestReconnectBrokenTCP(t *testing.T) {
 	}
 	lb := newLB(t, u.Host)
 	defer lb.ln.Close()
-	stopCh := make(chan struct{})
-	go lb.serve(stopCh)
+	ctx, cancel := context.WithCancel(context.TODO())
+	go lb.serve(ctx)
 	transport, ok := ts.Client().Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("failed to assert *http.Transport")
@@ -121,10 +119,7 @@ func TestReconnectBrokenTCP(t *testing.T) {
 		Transport: utilnet.SetTransportDefaults(transport),
 		Timeout:   1 * time.Second,
 		// These fields are required to create a REST client.
-		ContentConfig: ContentConfig{
-			GroupVersion:         &schema.GroupVersion{},
-			NegotiatedSerializer: &serializer.CodecFactory{},
-		},
+		Negotiator: newNegotiator(t),
 	}
 	client, err := RESTClientFor(config)
 	if err != nil {
@@ -141,10 +136,11 @@ func TestReconnectBrokenTCP(t *testing.T) {
 	// Deliberately let the LB stop proxying traffic for the current
 	// connection. This mimics a broken TCP connection that's not properly
 	// closed.
-	close(stopCh)
+	cancel()
 
-	stopCh = make(chan struct{})
-	go lb.serve(stopCh)
+	ctx, cancel = context.WithCancel(context.TODO())
+	defer cancel()
+	go lb.serve(ctx)
 	// Sleep enough time for the HTTP/2 health check to detect and close
 	// the broken TCP connection.
 	time.Sleep(time.Duration(1+readIdleTimeout+pingTimeout) * time.Second)
@@ -184,8 +180,8 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 	}
 	lb := newLB(t, u.Host)
 	defer lb.ln.Close()
-	stopCh := make(chan struct{})
-	go lb.serve(stopCh)
+	ctx, cancel := context.WithCancel(context.TODO())
+	go lb.serve(ctx)
 	transport, ok := ts.Client().Transport.(*http.Transport)
 	if !ok {
 		t.Fatal("failed to assert *http.Transport")
@@ -196,10 +192,7 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 		// large timeout, otherwise the broken connection will be cleaned by it
 		Timeout: wait.ForeverTestTimeout,
 		// These fields are required to create a REST client.
-		ContentConfig: ContentConfig{
-			GroupVersion:         &schema.GroupVersion{},
-			NegotiatedSerializer: &serializer.CodecFactory{},
-		},
+		Negotiator: newNegotiator(t),
 	}
 	config.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	client, err := RESTClientFor(config)
@@ -218,10 +211,11 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 	// Deliberately let the LB stop proxying traffic for the current
 	// connection. This mimics a broken TCP connection that's not properly
 	// closed.
-	close(stopCh)
+	cancel()
 
-	stopCh = make(chan struct{})
-	go lb.serve(stopCh)
+	ctx, cancel = context.WithCancel(context.TODO())
+	defer cancel()
+	go lb.serve(ctx)
 	// Close the idle connections
 	utilnet.CloseIdleConnectionsFor(client.Client.Transport)
 
@@ -247,6 +241,9 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 // 3. close the in-flight connection to force creating a new connection
 // 4. count that there are 2 connection on the LB but only one succeeds
 func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
 	done := make(chan struct{})
 	defer close(done)
 	received := make(chan struct{})
@@ -271,8 +268,8 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 
 	lb := newLB(t, u.Host)
 	defer lb.ln.Close()
-	stopCh := make(chan struct{})
-	go lb.serve(stopCh)
+	ctx1, cancel1 := context.WithCancel(ctx)
+	go lb.serve(ctx1)
 
 	transport, ok := ts.Client().Transport.(*http.Transport)
 	if !ok {
@@ -284,10 +281,7 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 		// Use something extraordinary large to not hit the timeout
 		Timeout: wait.ForeverTestTimeout,
 		// These fields are required to create a REST client.
-		ContentConfig: ContentConfig{
-			GroupVersion:         &schema.GroupVersion{},
-			NegotiatedSerializer: &serializer.CodecFactory{},
-		},
+		Negotiator: newNegotiator(t),
 	}
 	config.TLSClientConfig.NextProtos = []string{"http/1.1"}
 
@@ -299,11 +293,11 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 	// The request will connect, hang and eventually time out
 	// but we can use a context to close once the test is done
 	// we are only interested in have an inflight connection
-	ctx, cancel := context.WithCancel(context.Background())
+	conCtx, conCancel := context.WithCancel(context.Background())
 	reqErrCh := make(chan error, 1)
 	defer close(reqErrCh)
 	go func() {
-		_, err = client.Get().AbsPath("/hang").DoRaw(ctx)
+		_, err = client.Get().AbsPath("/hang").DoRaw(conCtx)
 		reqErrCh <- err
 	}()
 
@@ -317,13 +311,12 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 	// Deliberately let the LB stop proxying traffic for the current
 	// connection. This mimics a broken TCP connection that's not properly
 	// closed.
-	close(stopCh)
+	cancel1()
 
-	stopCh = make(chan struct{})
-	go lb.serve(stopCh)
+	go lb.serve(ctx)
 
 	// New request will fail if tries to reuse the connection
-	data, err := client.Get().AbsPath("/").DoRaw(context.Background())
+	data, err := client.Get().AbsPath("/").DoRaw(ctx)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -336,7 +329,8 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 	}
 
 	// cancel the in-flight connection
-	cancel()
+	conCancel()
+
 	select {
 	case <-reqErrCh:
 		if err == nil {
@@ -360,10 +354,7 @@ func TestRestClientTimeout(t *testing.T) {
 		Host:    ts.URL,
 		Timeout: 1 * time.Second,
 		// These fields are required to create a REST client.
-		ContentConfig: ContentConfig{
-			GroupVersion:         &schema.GroupVersion{},
-			NegotiatedSerializer: &serializer.CodecFactory{},
-		},
+		Negotiator: newNegotiator(t),
 	}
 	client, err := RESTClientFor(config)
 	if err != nil {

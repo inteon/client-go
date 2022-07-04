@@ -29,8 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
 	fakeclient "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -41,19 +41,19 @@ func (obj *fakePod) GetObjectKind() schema.ObjectKind { return schema.EmptyObjec
 func (obj *fakePod) DeepCopyObject() runtime.Object   { panic("DeepCopyObject not supported by fakePod") }
 
 func TestUntil(t *testing.T) {
-	fw := watch.NewFake()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	fw := watch.NewBoundedWatcher()
 	go func() {
 		var obj *fakePod
-		fw.Add(obj)
-		fw.Modify(obj)
+		fw.Add(ctx, obj)
+		fw.Modify(ctx, obj)
 	}()
 	conditions := []ConditionFunc{
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 		func(event watch.Event) (bool, error) { return event.Type == watch.Modified, nil },
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 
 	lastEvent, err := UntilWithoutRetry(ctx, fw, conditions...)
 	if err != nil {
@@ -71,18 +71,18 @@ func TestUntil(t *testing.T) {
 }
 
 func TestUntilMultipleConditions(t *testing.T) {
-	fw := watch.NewFake()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	fw := watch.NewBoundedWatcher()
 	go func() {
 		var obj *fakePod
-		fw.Add(obj)
+		fw.Add(ctx, obj)
 	}()
 	conditions := []ConditionFunc{
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 
 	lastEvent, err := UntilWithoutRetry(ctx, fw, conditions...)
 	if err != nil {
@@ -100,19 +100,19 @@ func TestUntilMultipleConditions(t *testing.T) {
 }
 
 func TestUntilMultipleConditionsFail(t *testing.T) {
-	fw := watch.NewFake()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	fw := watch.NewBoundedWatcher()
 	go func() {
 		var obj *fakePod
-		fw.Add(obj)
+		fw.Add(ctx, obj)
 	}()
 	conditions := []ConditionFunc{
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 		func(event watch.Event) (bool, error) { return event.Type == watch.Deleted, nil },
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	lastEvent, err := UntilWithoutRetry(ctx, fw, conditions...)
 	if err != wait.ErrWaitTimeout {
@@ -130,11 +130,14 @@ func TestUntilMultipleConditionsFail(t *testing.T) {
 }
 
 func TestUntilTimeout(t *testing.T) {
-	fw := watch.NewFake()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	fw := watch.NewBoundedWatcher()
 	go func() {
 		var obj *fakePod
-		fw.Add(obj)
-		fw.Modify(obj)
+		fw.Add(ctx, obj)
+		fw.Modify(ctx, obj)
 	}()
 	conditions := []ConditionFunc{
 		func(event watch.Event) (bool, error) {
@@ -145,7 +148,7 @@ func TestUntilTimeout(t *testing.T) {
 		},
 	}
 
-	lastEvent, err := UntilWithoutRetry(context.Background(), fw, conditions...)
+	lastEvent, err := UntilWithoutRetry(ctx, fw, conditions...)
 	if err != nil {
 		t.Fatalf("expected nil error, got %#v", err)
 	}
@@ -161,19 +164,19 @@ func TestUntilTimeout(t *testing.T) {
 }
 
 func TestUntilErrorCondition(t *testing.T) {
-	fw := watch.NewFake()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	fw := watch.NewBoundedWatcher()
 	go func() {
 		var obj *fakePod
-		fw.Add(obj)
+		fw.Add(ctx, obj)
 	}()
 	expected := "something bad"
 	conditions := []ConditionFunc{
 		func(event watch.Event) (bool, error) { return event.Type == watch.Added, nil },
 		func(event watch.Event) (bool, error) { return false, errors.New(expected) },
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 
 	_, err := UntilWithoutRetry(ctx, fw, conditions...)
 	if err == nil {
@@ -197,11 +200,13 @@ func TestUntilWithSync(t *testing.T) {
 		{
 			name: "doesn't wait for sync with no precondition",
 			lw: &cache.ListWatch{
-				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-					select {}
+				ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
 				},
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					select {}
+				WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
 				},
 			},
 			preconditionFunc: nil,
@@ -214,11 +219,13 @@ func TestUntilWithSync(t *testing.T) {
 		{
 			name: "waits indefinitely with precondition if it can't sync",
 			lw: &cache.ListWatch{
-				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-					select {}
+				ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
 				},
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					select {}
+				WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
 				},
 			},
 			preconditionFunc: func(store cache.Store) (bool, error) {
@@ -236,11 +243,11 @@ func TestUntilWithSync(t *testing.T) {
 				fakeclient := fakeclient.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "first"}})
 
 				return &cache.ListWatch{
-					ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-						return fakeclient.CoreV1().Secrets("").List(context.TODO(), options)
+					ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+						return fakeclient.CoreV1().Secrets("").List(ctx, options)
 					},
-					WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-						return fakeclient.CoreV1().Secrets("").Watch(context.TODO(), options)
+					WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+						return fakeclient.CoreV1().Secrets("").Watch(ctx, options)
 					},
 				}
 			}(),
@@ -266,11 +273,11 @@ func TestUntilWithSync(t *testing.T) {
 				fakeclient := fakeclient.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "first"}})
 
 				return &cache.ListWatch{
-					ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-						return fakeclient.CoreV1().Secrets("").List(context.TODO(), options)
+					ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+						return fakeclient.CoreV1().Secrets("").List(ctx, options)
 					},
-					WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-						return fakeclient.CoreV1().Secrets("").Watch(context.TODO(), options)
+					WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+						return fakeclient.CoreV1().Secrets("").Watch(ctx, options)
 					},
 				}
 			}(),

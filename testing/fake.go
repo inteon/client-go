@@ -22,7 +22,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	restclient "k8s.io/client-go/rest"
 )
 
@@ -63,7 +63,7 @@ type WatchReactor interface {
 	Handles(action Action) bool
 	// React handles a watch action and returns results.  It may choose to
 	// delegate by indicating handled=false.
-	React(action Action) (handled bool, ret watch.Interface, err error)
+	React(action Action) (handled bool, ret watch.Watcher, err error)
 }
 
 // ProxyReactor is an interface to allow the composition of proxy get
@@ -87,7 +87,7 @@ type ReactionFunc func(action Action) (handled bool, ret runtime.Object, err err
 // WatchReactionFunc is a function that returns a watch interface.  If
 // "handled" is false, then the test client will ignore the results and
 // continue to the next ReactionFunc.
-type WatchReactionFunc func(action Action) (handled bool, ret watch.Interface, err error)
+type WatchReactionFunc func(action Action) (handled bool, ret watch.Watcher, err error)
 
 // ProxyReactionFunc is a function that returns a ResponseWrapper interface
 // for a given Action.  If "handled" is false, then the test client will
@@ -155,7 +155,7 @@ func (c *Fake) Invokes(action Action, defaultReturnObj runtime.Object) (runtime.
 
 // InvokesWatch records the provided Action and then invokes the ReactionFunc
 // that handles the action if one exists.
-func (c *Fake) InvokesWatch(action Action) (watch.Interface, error) {
+func (c *Fake) InvokesWatch(action Action) (watch.Watcher, error) {
 	c.Lock()
 	defer c.Unlock()
 

@@ -17,19 +17,24 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Test public interface
 func doTestStore(t *testing.T, store Store) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	mkObj := func(id string, val string) testStoreObject {
 		return testStoreObject{id: id, val: val}
 	}
 
-	store.Add(mkObj("foo", "bar"))
+	store.Add(ctx, mkObj("foo", "bar"))
 	if item, ok, _ := store.Get(mkObj("foo", "")); !ok {
 		t.Errorf("didn't find inserted item")
 	} else {
@@ -37,7 +42,7 @@ func doTestStore(t *testing.T, store Store) {
 			t.Errorf("expected %v, got %v", e, a)
 		}
 	}
-	store.Update(mkObj("foo", "baz"))
+	store.Update(ctx, mkObj("foo", "baz"))
 	if item, ok, _ := store.Get(mkObj("foo", "")); !ok {
 		t.Errorf("didn't find inserted item")
 	} else {
@@ -45,15 +50,15 @@ func doTestStore(t *testing.T, store Store) {
 			t.Errorf("expected %v, got %v", e, a)
 		}
 	}
-	store.Delete(mkObj("foo", ""))
+	store.Delete(ctx, mkObj("foo", ""))
 	if _, ok, _ := store.Get(mkObj("foo", "")); ok {
 		t.Errorf("found deleted item??")
 	}
 
 	// Test List.
-	store.Add(mkObj("a", "b"))
-	store.Add(mkObj("c", "d"))
-	store.Add(mkObj("e", "e"))
+	store.Add(ctx, mkObj("a", "b"))
+	store.Add(ctx, mkObj("c", "d"))
+	store.Add(ctx, mkObj("e", "e"))
 	{
 		found := sets.String{}
 		for _, item := range store.List() {
@@ -68,7 +73,7 @@ func doTestStore(t *testing.T, store Store) {
 	}
 
 	// Test Replace.
-	store.Replace([]interface{}{
+	store.Replace(ctx, []interface{}{
 		mkObj("foo", "foo"),
 		mkObj("bar", "bar"),
 	}, "0")
@@ -89,6 +94,9 @@ func doTestStore(t *testing.T, store Store) {
 
 // Test public interface
 func doTestIndex(t *testing.T, indexer Indexer) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	mkObj := func(id string, val string) testStoreObject {
 		return testStoreObject{id: id, val: val}
 	}
@@ -98,10 +106,10 @@ func doTestIndex(t *testing.T, indexer Indexer) {
 	expected["b"] = sets.NewString("a", "c")
 	expected["f"] = sets.NewString("e")
 	expected["h"] = sets.NewString("g")
-	indexer.Add(mkObj("a", "b"))
-	indexer.Add(mkObj("c", "b"))
-	indexer.Add(mkObj("e", "f"))
-	indexer.Add(mkObj("g", "h"))
+	indexer.Add(ctx, mkObj("a", "b"))
+	indexer.Add(ctx, mkObj("c", "b"))
+	indexer.Add(ctx, mkObj("e", "f"))
+	indexer.Add(ctx, mkObj("g", "h"))
 	{
 		for k, v := range expected {
 			found := sets.String{}
@@ -144,7 +152,7 @@ func TestCache(t *testing.T) {
 }
 
 func TestFIFOCache(t *testing.T) {
-	doTestStore(t, NewFIFO(testStoreKeyFunc))
+	doTestStore(t, NewFIFO(KeyFunctionQueueOption(testStoreKeyFunc)))
 }
 
 func TestUndeltaStore(t *testing.T) {

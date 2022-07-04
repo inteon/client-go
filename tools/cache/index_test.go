@@ -17,11 +17,14 @@ limitations under the License.
 package cache
 
 import (
-	"k8s.io/apimachinery/pkg/util/sets"
+	"context"
 	"strings"
 	"testing"
+	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,15 +34,18 @@ func testIndexFunc(obj interface{}) ([]string, error) {
 }
 
 func TestGetIndexFuncValues(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	index := NewIndexer(MetaNamespaceKeyFunc, Indexers{"testmodes": testIndexFunc})
 
 	pod1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "one", Labels: map[string]string{"foo": "bar"}}}
 	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Labels: map[string]string{"foo": "bar"}}}
 	pod3 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "tre", Labels: map[string]string{"foo": "biz"}}}
 
-	index.Add(pod1)
-	index.Add(pod2)
-	index.Add(pod3)
+	index.Add(ctx, pod1)
+	index.Add(ctx, pod2)
+	index.Add(ctx, pod3)
 
 	keys := index.ListIndexFuncValues("testmodes")
 	if len(keys) != 2 {
@@ -61,15 +67,18 @@ func testUsersIndexFunc(obj interface{}) ([]string, error) {
 }
 
 func TestMultiIndexKeys(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	index := NewIndexer(MetaNamespaceKeyFunc, Indexers{"byUser": testUsersIndexFunc})
 
 	pod1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "one", Annotations: map[string]string{"users": "ernie,bert"}}}
 	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Annotations: map[string]string{"users": "bert,oscar"}}}
 	pod3 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "tre", Annotations: map[string]string{"users": "ernie,elmo"}}}
 
-	index.Add(pod1)
-	index.Add(pod2)
-	index.Add(pod3)
+	index.Add(ctx, pod1)
+	index.Add(ctx, pod2)
+	index.Add(ctx, pod3)
 
 	expected := map[string]sets.String{}
 	expected["ernie"] = sets.NewString("one", "tre")
@@ -93,7 +102,7 @@ func TestMultiIndexKeys(t *testing.T) {
 		}
 	}
 
-	index.Delete(pod3)
+	index.Delete(ctx, pod3)
 	erniePods, err := index.ByIndex("byUser", "ernie")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -117,7 +126,7 @@ func TestMultiIndexKeys(t *testing.T) {
 
 	copyOfPod2 := pod2.DeepCopy()
 	copyOfPod2.Annotations["users"] = "oscar"
-	index.Update(copyOfPod2)
+	index.Update(ctx, copyOfPod2)
 	bertPods, err := index.ByIndex("byUser", "bert")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)

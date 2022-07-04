@@ -17,6 +17,8 @@ limitations under the License.
 package cache
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -88,28 +90,26 @@ func (c *ExpirationCache) getTimestampedEntry(key string) (*TimestampedEntry, bo
 
 // getOrExpire retrieves the object from the TimestampedEntry if and only if it hasn't
 // already expired. It holds a write lock across deletion.
-func (c *ExpirationCache) getOrExpire(key string) (interface{}, bool) {
+func (c *ExpirationCache) getOrExpire(key string) (interface{}, bool, error) {
 	// Prevent all inserts from the time we deem an item as "expired" to when we
 	// delete it, so an un-expired item doesn't sneak in under the same key, just
 	// before the Delete.
 	c.expirationLock.Lock()
 	defer c.expirationLock.Unlock()
-	timestampedItem, exists := c.getTimestampedEntry(key)
-	if !exists {
-		return nil, false
-	}
-	if c.expirationPolicy.IsExpired(timestampedItem) {
+
+	if timestampedItem, exists := c.getTimestampedEntry(key); !exists {
+		return nil, false, nil
+	} else if c.expirationPolicy.IsExpired(timestampedItem) {
 		klog.V(4).Infof("Entry %v: %+v has expired", key, timestampedItem.Obj)
-		c.cacheStorage.Delete(key)
-		return nil, false
+		return nil, false, c.cacheStorage.Delete(key)
+	} else {
+		return timestampedItem.Obj, true, nil
 	}
-	return timestampedItem.Obj, true
 }
 
 // GetByKey returns the item stored under the key, or sets exists=false.
 func (c *ExpirationCache) GetByKey(key string) (interface{}, bool, error) {
-	obj, exists := c.getOrExpire(key)
-	return obj, exists, nil
+	return c.getOrExpire(key)
 }
 
 // Get returns unexpired items. It purges the cache of expired items in the
@@ -119,8 +119,7 @@ func (c *ExpirationCache) Get(obj interface{}) (interface{}, bool, error) {
 	if err != nil {
 		return nil, false, KeyError{obj, err}
 	}
-	obj, exists := c.getOrExpire(key)
-	return obj, exists, nil
+	return c.getOrExpire(key)
 }
 
 // List retrieves a list of unexpired items. It purges the cache of expired
@@ -131,7 +130,9 @@ func (c *ExpirationCache) List() []interface{} {
 	list := make([]interface{}, 0, len(items))
 	for _, item := range items {
 		key := item.(*TimestampedEntry).key
-		if obj, exists := c.getOrExpire(key); exists {
+		if obj, exists, err := c.getOrExpire(key); err != nil {
+			panic(fmt.Errorf("delete failed %w", err))
+		} else if exists {
 			list = append(list, obj)
 		}
 	}
@@ -145,7 +146,7 @@ func (c *ExpirationCache) ListKeys() []string {
 
 // Add timestamps an item and inserts it into the cache, overwriting entries
 // that might exist under the same key.
-func (c *ExpirationCache) Add(obj interface{}) error {
+func (c *ExpirationCache) Add(_ context.Context, obj interface{}) error {
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
@@ -153,32 +154,31 @@ func (c *ExpirationCache) Add(obj interface{}) error {
 	c.expirationLock.Lock()
 	defer c.expirationLock.Unlock()
 
-	c.cacheStorage.Add(key, &TimestampedEntry{obj, c.clock.Now(), key})
-	return nil
+	return c.cacheStorage.Add(key, &TimestampedEntry{obj, c.clock.Now(), key})
 }
 
 // Update has not been implemented yet for lack of a use case, so this method
 // simply calls `Add`. This effectively refreshes the timestamp.
-func (c *ExpirationCache) Update(obj interface{}) error {
-	return c.Add(obj)
+func (c *ExpirationCache) Update(ctx context.Context, obj interface{}) error {
+	return c.Add(ctx, obj)
 }
 
 // Delete removes an item from the cache.
-func (c *ExpirationCache) Delete(obj interface{}) error {
+func (c *ExpirationCache) Delete(_ context.Context, obj interface{}) error {
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
 	c.expirationLock.Lock()
 	defer c.expirationLock.Unlock()
-	c.cacheStorage.Delete(key)
-	return nil
+
+	return c.cacheStorage.Delete(key)
 }
 
 // Replace will convert all items in the given list to TimestampedEntries
 // before attempting the replace operation. The replace operation will
 // delete the contents of the ExpirationCache `c`.
-func (c *ExpirationCache) Replace(list []interface{}, resourceVersion string) error {
+func (c *ExpirationCache) Replace(_ context.Context, list []interface{}, resourceVersion string) error {
 	items := make(map[string]interface{}, len(list))
 	ts := c.clock.Now()
 	for _, item := range list {
@@ -190,13 +190,8 @@ func (c *ExpirationCache) Replace(list []interface{}, resourceVersion string) er
 	}
 	c.expirationLock.Lock()
 	defer c.expirationLock.Unlock()
-	c.cacheStorage.Replace(items, resourceVersion)
-	return nil
-}
 
-// Resync is a no-op for one of these
-func (c *ExpirationCache) Resync() error {
-	return nil
+	return c.cacheStorage.Replace(items, resourceVersion)
 }
 
 // NewTTLStore creates and returns a ExpirationCache with a TTLPolicy
@@ -207,7 +202,7 @@ func NewTTLStore(keyFunc KeyFunc, ttl time.Duration) Store {
 // NewExpirationStore creates and returns a ExpirationCache for a given policy
 func NewExpirationStore(keyFunc KeyFunc, expirationPolicy ExpirationPolicy) Store {
 	return &ExpirationCache{
-		cacheStorage:     NewThreadSafeStore(Indexers{}, Indices{}),
+		cacheStorage:     NewThreadSafeStore(Indexers{}),
 		keyFunc:          keyFunc,
 		clock:            clock.RealClock{},
 		expirationPolicy: expirationPolicy,

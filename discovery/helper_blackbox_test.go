@@ -18,11 +18,13 @@ package discovery_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,11 +32,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/rest/fake"
 )
+
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	return kubeScheme
+}
+
+func newNegotiator(t testing.TB) rest.SerializerNegotiator {
+	return rest.NewSerializerNegotiator(newKubeScheme(t), false)
+}
+
+func discoveryClient(t testing.TB, config *restclient.Config) *discovery.DiscoveryClient {
+	config.Negotiator = newNegotiator(t)
+	restClient, err := restclient.RESTClientFor(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return discovery.NewDiscoveryClient(restClient)
+}
 
 func objBody(object interface{}) io.ReadCloser {
 	output, err := json.MarshalIndent(object, "", "")
@@ -89,9 +113,9 @@ func TestServerSupportsVersion(t *testing.T) {
 			header.Set("Content-Type", runtime.ContentTypeJSON)
 			return &http.Response{StatusCode: test.statusCode, Header: header, Body: objBody(&metav1.APIVersions{Versions: test.serverVersions})}, nil
 		})
-		c := discovery.NewDiscoveryClientForConfigOrDie(&restclient.Config{})
+		c := discoveryClient(t, &restclient.Config{Negotiator: newNegotiator(t)})
 		c.RESTClient().(*restclient.RESTClient).Client = fakeClient
-		err := discovery.ServerSupportsVersion(c, test.requiredVersion)
+		err := discovery.ServerSupportsVersion(context.TODO(), c, test.requiredVersion)
 		if err == nil && test.expectErr != nil {
 			t.Errorf("expected error, got nil for [%s].", test.name)
 		}
@@ -105,20 +129,21 @@ func TestServerSupportsVersion(t *testing.T) {
 }
 
 func TestFilteredBy(t *testing.T) {
-	all := discovery.ResourcePredicateFunc(func(gv string, r *metav1.APIResource) bool {
+	all := discovery.ResourcePredicateFunc(func(resource *metav1.APIResource) bool {
 		return true
 	})
-	none := discovery.ResourcePredicateFunc(func(gv string, r *metav1.APIResource) bool {
+	none := discovery.ResourcePredicateFunc(func(resource *metav1.APIResource) bool {
 		return false
 	})
-	onlyV2 := discovery.ResourcePredicateFunc(func(gv string, r *metav1.APIResource) bool {
-		return strings.HasSuffix(gv, "/v2") || gv == "v2"
+	onlyV2 := discovery.ResourcePredicateFunc(func(resource *metav1.APIResource) bool {
+		return resource.Version == "v2"
 	})
-	onlyBar := discovery.ResourcePredicateFunc(func(gv string, r *metav1.APIResource) bool {
-		return r.Kind == "Bar"
+	onlyBar := discovery.ResourcePredicateFunc(func(resource *metav1.APIResource) bool {
+		return resource.Kind == "Bar"
 	})
 
-	foo := []*metav1.APIResourceList{
+	foo1 := []*metav1.APIResourceList{{GroupVersion: "foo/v1"}}
+	foo2 := []*metav1.APIResourceList{
 		{
 			GroupVersion: "foo/v1",
 			APIResources: []metav1.APIResource{
@@ -142,22 +167,34 @@ func TestFilteredBy(t *testing.T) {
 	tests := []struct {
 		input             []*metav1.APIResourceList
 		pred              discovery.ResourcePredicate
-		expectedResources []string
+		expectedResources []schema.GroupVersionResource
 	}{
-		{nil, all, []string{}},
-		{[]*metav1.APIResourceList{
-			{GroupVersion: "foo/v1"},
-		}, all, []string{}},
-		{foo, all, []string{"foo/v1.bar", "foo/v1.test", "foo/v2.bar", "foo/v2.test"}},
-		{foo, onlyV2, []string{"foo/v2.bar", "foo/v2.test"}},
-		{foo, onlyBar, []string{"foo/v1.bar", "foo/v2.bar"}},
-		{foo, none, []string{}},
+		{nil, all, []schema.GroupVersionResource{}},
+		{foo1, all, []schema.GroupVersionResource{}},
+		{foo2, all, []schema.GroupVersionResource{
+			{Group: "foo", Version: "v1", Resource: "bar"},
+			{Group: "foo", Version: "v1", Resource: "test"},
+			{Group: "foo", Version: "v2", Resource: "bar"},
+			{Group: "foo", Version: "v2", Resource: "test"},
+		}},
+		{foo2, onlyV2, []schema.GroupVersionResource{
+			{Group: "foo", Version: "v2", Resource: "bar"},
+			{Group: "foo", Version: "v2", Resource: "test"},
+		}},
+		{foo2, onlyBar, []schema.GroupVersionResource{
+			{Group: "foo", Version: "v1", Resource: "bar"},
+			{Group: "foo", Version: "v2", Resource: "bar"},
+		}},
+		{foo2, none, []schema.GroupVersionResource{}},
 	}
-	for i, test := range tests {
-		filtered := discovery.FilteredBy(test.pred, test.input)
 
-		if expected, got := sets.NewString(test.expectedResources...), sets.NewString(stringify(filtered)...); !expected.Equal(got) {
-			t.Errorf("[%d] unexpected group versions: expected=%v, got=%v", i, test.expectedResources, stringify(filtered))
+	for i, test := range tests {
+		filtered := discovery.FilteredBy(test.pred, discovery.UnpackAPIResourceLists(test.input...))
+
+		t.Log(filtered)
+
+		if !reflect.DeepEqual(test.expectedResources, discovery.GroupVersionResources(filtered)) {
+			t.Errorf("[%d] unexpected group versions: expected=%v, got=%v", i, test.expectedResources, filtered)
 		}
 	}
 }

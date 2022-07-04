@@ -230,7 +230,7 @@ func TestConfigToExecClusterRoundtrip(t *testing.T) {
 		func(fn *transport.WrapperFunc, f fuzz.Continue) {
 			*fn = fakeWrapperFunc
 		},
-		func(r *runtime.NegotiatedSerializer, f fuzz.Continue) {
+		func(r *SerializerNegotiator, f fuzz.Continue) {
 			serializer := &fakeNegotiatedSerializer{}
 			f.Fuzz(serializer)
 			*r = serializer
@@ -266,8 +266,7 @@ func TestConfigToExecClusterRoundtrip(t *testing.T) {
 
 		// This is the list of known fields that this roundtrip doesn't care about. We should add new
 		// fields to this list if we don't want to roundtrip them on exec cluster conversion.
-		expected.APIPath = ""
-		expected.ContentConfig = ContentConfig{}
+		expected.Negotiator = nil
 		expected.Username = ""
 		expected.Password = ""
 		expected.BearerToken = ""

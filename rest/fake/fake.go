@@ -22,8 +22,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
@@ -47,9 +45,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 // interactions via a rest.Request, or to make them via the provided Client to
 // a specific server.
 type RESTClient struct {
-	NegotiatedSerializer runtime.NegotiatedSerializer
-	GroupVersion         schema.GroupVersion
-	VersionedAPIPath     string
+	Negotiator restclient.SerializerNegotiator
 
 	// Err is returned when any request would be made to the server. If Err is set,
 	// Req will not be recorded, Resp will not be returned, and Client will not be
@@ -88,21 +84,12 @@ func (c *RESTClient) Verb(verb string) *restclient.Request {
 	return c.Request().Verb(verb)
 }
 
-func (c *RESTClient) APIVersion() schema.GroupVersion {
-	return c.GroupVersion
-}
-
 func (c *RESTClient) GetRateLimiter() flowcontrol.RateLimiter {
 	return nil
 }
 
 func (c *RESTClient) Request() *restclient.Request {
-	config := restclient.ClientContentConfig{
-		ContentType:  runtime.ContentTypeJSON,
-		GroupVersion: c.GroupVersion,
-		Negotiator:   runtime.NewClientNegotiator(c.NegotiatedSerializer, c.GroupVersion),
-	}
-	return restclient.NewRequestWithClient(&url.URL{Scheme: "https", Host: "localhost"}, c.VersionedAPIPath, config, CreateHTTPClient(c.do))
+	return restclient.NewRequestWithClient(&url.URL{Scheme: "https", Host: "localhost"}, c.Negotiator, CreateHTTPClient(c.do))
 }
 
 // do is invoked when a Request() created by this client is executed.

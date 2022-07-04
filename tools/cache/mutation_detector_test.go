@@ -17,23 +17,24 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 )
 
 func TestMutationDetector(t *testing.T) {
-	fakeWatch := watch.NewFake()
+	fakeWatch := watch.NewBoundedWatcher()
 	lw := &testLW{
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+		WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 			return fakeWatch, nil
 		},
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+		ListFunc: func(_ context.Context, options metav1.ListOptions) (runtime.Object, error) {
 			return &v1.PodList{}, nil
 		},
 	}
@@ -43,11 +44,11 @@ func TestMutationDetector(t *testing.T) {
 			Labels: map[string]string{"check": "foo"},
 		},
 	}
-	stopCh := make(chan struct{})
-	defer close(stopCh)
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 	mutationFound := make(chan bool)
 
-	informer := NewSharedInformer(lw, &v1.Pod{}, 1*time.Second).(*sharedIndexInformer)
+	informer := NewSharedInformer(lw, &v1.Pod{}).(*sharedIndexInformer)
 	detector := &defaultCacheMutationDetector{
 		name:           "name",
 		period:         1 * time.Second,
@@ -57,9 +58,9 @@ func TestMutationDetector(t *testing.T) {
 		},
 	}
 	informer.cacheMutationDetector = detector
-	go informer.Run(stopCh)
+	go informer.Run(ctx)
 
-	fakeWatch.Add(pod)
+	fakeWatch.Add(ctx, pod)
 
 	wait.PollImmediate(100*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
 		detector.addedObjsLock.Lock()

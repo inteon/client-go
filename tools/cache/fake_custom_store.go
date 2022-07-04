@@ -16,39 +16,48 @@ limitations under the License.
 
 package cache
 
+import "context"
+
 // FakeCustomStore lets you define custom functions for store operations.
 type FakeCustomStore struct {
-	AddFunc      func(obj interface{}) error
-	UpdateFunc   func(obj interface{}) error
-	DeleteFunc   func(obj interface{}) error
+	AddFunc      func(ctx context.Context, obj interface{}) error
+	UpdateFunc   func(ctx context.Context, obj interface{}) error
+	DeleteFunc   func(ctx context.Context, obj interface{}) error
+	ReplaceFunc  func(ctx context.Context, list []interface{}, resourceVersion string) error
 	ListFunc     func() []interface{}
 	ListKeysFunc func() []string
 	GetFunc      func(obj interface{}) (item interface{}, exists bool, err error)
 	GetByKeyFunc func(key string) (item interface{}, exists bool, err error)
-	ReplaceFunc  func(list []interface{}, resourceVersion string) error
-	ResyncFunc   func() error
 }
 
 // Add calls the custom Add function if defined
-func (f *FakeCustomStore) Add(obj interface{}) error {
+func (f *FakeCustomStore) Add(ctx context.Context, obj interface{}) error {
 	if f.AddFunc != nil {
-		return f.AddFunc(obj)
+		return f.AddFunc(ctx, obj)
 	}
 	return nil
 }
 
 // Update calls the custom Update function if defined
-func (f *FakeCustomStore) Update(obj interface{}) error {
+func (f *FakeCustomStore) Update(ctx context.Context, obj interface{}) error {
 	if f.UpdateFunc != nil {
-		return f.UpdateFunc(obj)
+		return f.UpdateFunc(ctx, obj)
 	}
 	return nil
 }
 
 // Delete calls the custom Delete function if defined
-func (f *FakeCustomStore) Delete(obj interface{}) error {
+func (f *FakeCustomStore) Delete(ctx context.Context, obj interface{}) error {
 	if f.DeleteFunc != nil {
-		return f.DeleteFunc(obj)
+		return f.DeleteFunc(ctx, obj)
+	}
+	return nil
+}
+
+// Replace calls the custom Replace function if defined
+func (f *FakeCustomStore) Replace(ctx context.Context, list []interface{}, resourceVersion string) error {
+	if f.ReplaceFunc != nil {
+		return f.ReplaceFunc(ctx, list, resourceVersion)
 	}
 	return nil
 }
@@ -83,20 +92,4 @@ func (f *FakeCustomStore) GetByKey(key string) (item interface{}, exists bool, e
 		return f.GetByKeyFunc(key)
 	}
 	return nil, false, nil
-}
-
-// Replace calls the custom Replace function if defined
-func (f *FakeCustomStore) Replace(list []interface{}, resourceVersion string) error {
-	if f.ReplaceFunc != nil {
-		return f.ReplaceFunc(list, resourceVersion)
-	}
-	return nil
-}
-
-// Resync calls the custom Resync function if defined
-func (f *FakeCustomStore) Resync() error {
-	if f.ResyncFunc != nil {
-		return f.ResyncFunc()
-	}
-	return nil
 }

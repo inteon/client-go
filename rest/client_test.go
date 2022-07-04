@@ -18,7 +18,6 @@ package rest
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -29,7 +28,6 @@ import (
 	"time"
 
 	v1 "k8s.io/api/core/v1"
-	v1beta1 "k8s.io/api/extensions/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,20 +49,39 @@ type TestParam struct {
 	testBodyErrorIsNotNil bool
 }
 
-// TestSerializer makes sure that you're always able to decode metav1.Status
-func TestSerializer(t *testing.T) {
-	gv := v1beta1.SchemeGroupVersion
-	contentConfig := ContentConfig{
-		ContentType:          "application/json",
-		GroupVersion:         &gv,
-		NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
-	}
-
-	n := runtime.NewClientNegotiator(contentConfig.NegotiatedSerializer, gv)
-	d, err := n.Decoder("application/json", nil)
-	if err != nil {
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
 		t.Fatal(err)
 	}
+	return kubeScheme
+}
+
+func newNegotiator(t testing.TB) SerializerNegotiator {
+	return NewSerializerNegotiator(newKubeScheme(t), false)
+}
+
+func jsonDecoder(t testing.TB) runtime.Decoder {
+	if d, err := newNegotiator(t).Decoder(runtime.ContentTypeJSON, nil); err != nil {
+		t.Fatal(err)
+		return nil
+	} else {
+		return d
+	}
+}
+
+func jsonEncoder(t testing.TB) runtime.Encoder {
+	if d, err := newNegotiator(t).Encoder(runtime.ContentTypeJSON, nil); err != nil {
+		t.Fatal(err)
+		return nil
+	} else {
+		return d
+	}
+}
+
+// TestSerializer makes sure that you're always able to decode metav1.Status
+func TestSerializer(t *testing.T) {
+	d := jsonDecoder(t)
 
 	// bytes based on actual return from API server when encoding an "unversioned" object
 	obj, err := runtime.Decode(d, []byte(`{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Success"}`))
@@ -78,11 +95,11 @@ func TestDoRequestSuccess(t *testing.T) {
 	testServer, fakeHandler, status := testServerEnv(t, 200)
 	defer testServer.Close()
 
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	body, err := c.Get().Prefix("test").Do(context.Background()).Raw()
+	body, err := c.Get().GroupVersion(v1.SchemeGroupVersion).Prefix("test").Do(context.Background()).Raw()
 
 	testParam := TestParam{actualError: err, expectingError: false, expCreated: true,
 		expStatus: status, testBody: true, testBodyErrorIsNotNil: false}
@@ -97,7 +114,11 @@ func TestDoRequestFailed(t *testing.T) {
 		Message: " \"\" not found",
 		Details: &metav1.StatusDetails{},
 	}
-	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), status)
+	expectedBody, _ := runtime.Encode(jsonEncoder(t), status)
+	// decode value, so Kind values are being updated in original object
+	if _, _, err := jsonDecoder(t).Decode(expectedBody, nil, status); err != nil {
+		t.Fatal(err)
+	}
 	fakeHandler := utiltesting.FakeHandler{
 		StatusCode:   404,
 		ResponseBody: string(expectedBody),
@@ -106,11 +127,11 @@ func TestDoRequestFailed(t *testing.T) {
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
 
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	err = c.Get().Do(context.Background()).Error()
+	err = c.Get().GroupVersion(v1.SchemeGroupVersion).Do(context.Background()).Error()
 	if err == nil {
 		t.Errorf("unexpected non-error")
 	}
@@ -136,7 +157,7 @@ func TestDoRawRequestFailed(t *testing.T) {
 			},
 		},
 	}
-	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), status)
+	expectedBody, _ := runtime.Encode(jsonEncoder(t), status)
 	fakeHandler := utiltesting.FakeHandler{
 		StatusCode:   404,
 		ResponseBody: string(expectedBody),
@@ -145,7 +166,7 @@ func TestDoRawRequestFailed(t *testing.T) {
 	testServer := httptest.NewServer(&fakeHandler)
 	defer testServer.Close()
 
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,12 +189,12 @@ func TestDoRequestCreated(t *testing.T) {
 	testServer, fakeHandler, status := testServerEnv(t, 201)
 	defer testServer.Close()
 
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	created := false
-	body, err := c.Get().Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
+	body, err := c.Get().GroupVersion(v1.SchemeGroupVersion).Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
 
 	testParam := TestParam{actualError: err, expectingError: false, expCreated: true,
 		expStatus: status, testBody: false}
@@ -183,12 +204,12 @@ func TestDoRequestCreated(t *testing.T) {
 func TestDoRequestNotCreated(t *testing.T) {
 	testServer, fakeHandler, expectedStatus := testServerEnv(t, 202)
 	defer testServer.Close()
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	created := false
-	body, err := c.Get().Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
+	body, err := c.Get().GroupVersion(v1.SchemeGroupVersion).Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
 	testParam := TestParam{actualError: err, expectingError: false, expCreated: false,
 		expStatus: expectedStatus, testBody: false}
 	validate(testParam, t, body, fakeHandler)
@@ -198,12 +219,12 @@ func TestDoRequestAcceptedNoContentReturned(t *testing.T) {
 	testServer, fakeHandler, _ := testServerEnv(t, 204)
 	defer testServer.Close()
 
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	created := false
-	body, err := c.Get().Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
+	body, err := c.Get().GroupVersion(v1.SchemeGroupVersion).Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
 	testParam := TestParam{actualError: err, expectingError: false, expCreated: false,
 		testBody: false}
 	validate(testParam, t, body, fakeHandler)
@@ -212,12 +233,12 @@ func TestDoRequestAcceptedNoContentReturned(t *testing.T) {
 func TestBadRequest(t *testing.T) {
 	testServer, fakeHandler, _ := testServerEnv(t, 400)
 	defer testServer.Close()
-	c, err := restClient(testServer)
+	c, err := restClient(t, testServer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	created := false
-	body, err := c.Get().Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
+	body, err := c.Get().GroupVersion(v1.SchemeGroupVersion).Prefix("test").Do(context.Background()).WasCreated(&created).Raw()
 	testParam := TestParam{actualError: err, expectingError: true, expCreated: false,
 		testBody: true}
 	validate(testParam, t, body, fakeHandler)
@@ -235,7 +256,7 @@ func validate(testParam TestParam, t *testing.T, body []byte, fakeHandler *utilt
 			t.Errorf("Expected object not to be created")
 		}
 	}
-	statusOut, err := runtime.Decode(scheme.Codecs.UniversalDeserializer(), body)
+	statusOut, err := runtime.Decode(jsonDecoder(t), body)
 	if testParam.testBody {
 		if testParam.testBodyErrorIsNotNil && err == nil {
 			t.Errorf("Expected Error")
@@ -257,7 +278,7 @@ func validate(testParam TestParam, t *testing.T, body []byte, fakeHandler *utilt
 func TestHTTPMethods(t *testing.T) {
 	testServer, _, _ := testServerEnv(t, 200)
 	defer testServer.Close()
-	c, _ := restClient(testServer)
+	c, _ := restClient(t, testServer)
 
 	request := c.Post()
 	if request == nil {
@@ -309,14 +330,11 @@ func TestHTTPProxy(t *testing.T) {
 	}
 
 	c, err := RESTClientFor(&Config{
-		Host: testServer.URL,
-		ContentConfig: ContentConfig{
-			GroupVersion:         &v1.SchemeGroupVersion,
-			NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
-		},
-		Proxy:    http.ProxyURL(u),
-		Username: "user",
-		Password: "pass",
+		Host:       testServer.URL,
+		Negotiator: newNegotiator(t),
+		Proxy:      http.ProxyURL(u),
+		Username:   "user",
+		Password:   "pass",
 	})
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
@@ -373,8 +391,8 @@ func TestCreateBackoffManager(t *testing.T) {
 }
 
 func testServerEnv(t *testing.T, statusCode int) (*httptest.Server, *utiltesting.FakeHandler, *metav1.Status) {
-	status := &metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: fmt.Sprintf("%s", metav1.StatusSuccess)}
-	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), status)
+	status := &metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: metav1.StatusSuccess}
+	expectedBody, _ := runtime.Encode(jsonEncoder(t), status)
 	fakeHandler := utiltesting.FakeHandler{
 		StatusCode:   statusCode,
 		ResponseBody: string(expectedBody),
@@ -384,15 +402,12 @@ func testServerEnv(t *testing.T, statusCode int) (*httptest.Server, *utiltesting
 	return testServer, &fakeHandler, status
 }
 
-func restClient(testServer *httptest.Server) (*RESTClient, error) {
+func restClient(t testing.TB, testServer *httptest.Server) (*RESTClient, error) {
 	c, err := RESTClientFor(&Config{
-		Host: testServer.URL,
-		ContentConfig: ContentConfig{
-			GroupVersion:         &v1.SchemeGroupVersion,
-			NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
-		},
-		Username: "user",
-		Password: "pass",
+		Host:       testServer.URL,
+		Negotiator: newNegotiator(t),
+		Username:   "user",
+		Password:   "pass",
 	})
 	return c, err
 }

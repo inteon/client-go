@@ -40,7 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	restclientwatch "k8s.io/client-go/rest/watch"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/client-go/util/flowcontrol"
@@ -109,6 +109,8 @@ type Request struct {
 	headers    http.Header
 
 	// structural elements of the request that are part of the Kubernetes API conventions
+	apiPath      string
+	groupVersion schema.GroupVersion
 	namespace    string
 	namespaceSet bool
 	resource     string
@@ -132,13 +134,6 @@ func NewRequest(c *RESTClient) *Request {
 		backoff = noBackoff
 	}
 
-	var pathPrefix string
-	if c.base != nil {
-		pathPrefix = path.Join("/", c.base.Path, c.versionedAPIPath)
-	} else {
-		pathPrefix = path.Join("/", c.versionedAPIPath)
-	}
-
 	var timeout time.Duration
 	if c.Client != nil {
 		timeout = c.Client.Timeout
@@ -149,34 +144,60 @@ func NewRequest(c *RESTClient) *Request {
 		rateLimiter:    c.rateLimiter,
 		backoff:        backoff,
 		timeout:        timeout,
-		pathPrefix:     pathPrefix,
 		maxRetries:     10,
 		retryFn:        defaultRequestRetryFn,
 		warningHandler: c.warningHandler,
+
+		apiPath:    "",
+		pathPrefix: "",
 	}
 
-	switch {
-	case len(c.content.AcceptContentTypes) > 0:
-		r.SetHeader("Accept", c.content.AcceptContentTypes)
-	case len(c.content.ContentType) > 0:
-		r.SetHeader("Accept", c.content.ContentType+", */*")
+	if r.c.negotiator != nil {
+		// Unknown GVK will trigger default Accept header -> use ExpectKind(...) to overwrite
+		r.SetHeader("Accept", r.c.negotiator.AcceptContentTypes(schema.GroupVersionKind{}))
 	}
+
 	return r
 }
 
 // NewRequestWithClient creates a Request with an embedded RESTClient for use in test scenarios.
-func NewRequestWithClient(base *url.URL, versionedAPIPath string, content ClientContentConfig, client *http.Client) *Request {
+func NewRequestWithClient(base *url.URL, negotiator SerializerNegotiator, client *http.Client) *Request {
 	return NewRequest(&RESTClient{
-		base:             base,
-		versionedAPIPath: versionedAPIPath,
-		content:          content,
-		Client:           client,
+		base:       base,
+		negotiator: negotiator,
+		Client:     client,
 	})
 }
 
 // Verb sets the verb this request will use.
 func (r *Request) Verb(verb string) *Request {
 	r.verb = verb
+	return r
+}
+
+// ApiPath sets the ApiPath this request will use.
+func (r *Request) ApiPath(apiPath string) *Request {
+	if r.err != nil {
+		return r
+	}
+	if len(r.apiPath) != 0 {
+		r.err = fmt.Errorf("apiPath already set to %q, cannot change to %q", r.apiPath, apiPath)
+		return r
+	}
+	r.apiPath = apiPath
+	return r
+}
+
+// GroupVersion sets the GroupVersion this request will use.
+func (r *Request) GroupVersion(groupVersion schema.GroupVersion) *Request {
+	if r.err != nil {
+		return r
+	}
+	if len(r.groupVersion.Group) != 0 || len(r.groupVersion.Version) != 0 {
+		r.err = fmt.Errorf("GroupVersion already set to %q, cannot change to %q", r.groupVersion, groupVersion)
+		return r
+	}
+	r.groupVersion = groupVersion
 	return r
 }
 
@@ -215,6 +236,18 @@ func (r *Request) Resource(resource string) *Request {
 		return r
 	}
 	r.resource = resource
+	return r
+}
+
+func (r *Request) ExpectKind(kind string) *Request {
+	if r.err != nil {
+		return r
+	}
+	if len(r.groupVersion.Group) == 0 && len(r.groupVersion.Version) == 0 {
+		r.err = fmt.Errorf("groupVersion has to be set before calling ExpectKind")
+		return r
+	}
+	r.SetHeader("Accept", r.c.negotiator.AcceptContentTypes(r.groupVersion.WithKind(kind)))
 	return r
 }
 
@@ -361,15 +394,15 @@ func (r *Request) Param(paramName, s string) *Request {
 // to the request. Use this to provide versioned query parameters from client libraries.
 // VersionedParams will not write query parameters that have omitempty set and are empty. If a
 // parameter has already been set it is appended to (Params and VersionedParams are additive).
-func (r *Request) VersionedParams(obj runtime.Object, codec runtime.ParameterCodec) *Request {
-	return r.SpecificallyVersionedParams(obj, codec, r.c.content.GroupVersion)
-}
-
-func (r *Request) SpecificallyVersionedParams(obj runtime.Object, codec runtime.ParameterCodec, version schema.GroupVersion) *Request {
+func (r *Request) VersionedParams(obj runtime.Object) *Request {
 	if r.err != nil {
 		return r
 	}
-	params, err := codec.EncodeParameters(obj, version)
+	if r.c.negotiator == nil {
+		r.err = fmt.Errorf("no serialisation negotiator is set, cannot encode the parameters")
+		return r
+	}
+	params, err := r.c.negotiator.ParameterCodec().EncodeParameters(obj, r.groupVersion)
 	if err != nil {
 		r.err = err
 		return r
@@ -454,7 +487,9 @@ func (r *Request) Body(obj interface{}) *Request {
 		if reflect.ValueOf(t).IsNil() {
 			return r
 		}
-		encoder, err := r.c.content.Negotiator.Encoder(r.c.content.ContentType, nil)
+
+		contentType := r.c.negotiator.ContentType(t.GetObjectKind().GroupVersionKind())
+		encoder, err := r.c.negotiator.Encoder(contentType, nil)
 		if err != nil {
 			r.err = err
 			return r
@@ -466,7 +501,7 @@ func (r *Request) Body(obj interface{}) *Request {
 		}
 		glogBody("Request Body", data)
 		r.body = bytes.NewReader(data)
-		r.SetHeader("Content-Type", r.c.content.ContentType)
+		r.SetHeader("Content-Type", contentType)
 	default:
 		r.err = fmt.Errorf("unknown type used for body: %+v", obj)
 	}
@@ -475,7 +510,17 @@ func (r *Request) Body(obj interface{}) *Request {
 
 // URL returns the current working URL.
 func (r *Request) URL() *url.URL {
-	p := r.pathPrefix
+	p := r.apiPath
+	if len(r.groupVersion.Group) > 0 {
+		p = path.Join(p, r.groupVersion.Group, r.groupVersion.Version)
+	} else {
+		p = path.Join(p, r.groupVersion.Version)
+	}
+	if len(r.pathPrefix) > 0 && r.pathPrefix[len(r.pathPrefix)-1] == '/' {
+		p = path.Join(p, r.pathPrefix) + "/"
+	} else {
+		p = path.Join(p, r.pathPrefix)
+	}
 	if r.namespaceSet && len(r.namespace) > 0 {
 		p = path.Join(p, "namespaces", r.namespace)
 	}
@@ -603,8 +648,8 @@ func (b *throttledLogger) Infof(message string, args ...interface{}) {
 }
 
 // Watch attempts to begin watching the requested location.
-// Returns a watch.Interface, or an error.
-func (r *Request) Watch(ctx context.Context) (watch.Interface, error) {
+// Returns a watch.Watcher, or an error.
+func (r *Request) Watch(ctx context.Context) (watch.Watcher, error) {
 	// We specifically don't want to rate limit watches, so we
 	// don't use r.rateLimiter here.
 	if r.err != nil {
@@ -661,7 +706,7 @@ func (r *Request) Watch(ctx context.Context) (watch.Interface, error) {
 		}()
 		if done {
 			if isErrRetryableFunc(req, err) {
-				return watch.NewEmptyWatch(), nil
+				return watch.NewEmptyWatcher(), nil
 			}
 			if err == nil {
 				// if the server sent us an HTTP Response object,
@@ -673,13 +718,16 @@ func (r *Request) Watch(ctx context.Context) (watch.Interface, error) {
 	}
 }
 
-func (r *Request) newStreamWatcher(resp *http.Response) (watch.Interface, error) {
+func (r *Request) newStreamWatcher(resp *http.Response) (watch.Watcher, error) {
 	contentType := resp.Header.Get("Content-Type")
+	if len(contentType) == 0 && r.c.negotiator != nil {
+		contentType, _, _ = strings.Cut(r.c.negotiator.AcceptContentTypes(schema.GroupVersionKind{}), ",")
+	}
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		klog.V(4).Infof("Unexpected content type from the server: %q: %v", contentType, err)
 	}
-	objectDecoder, streamingSerializer, framer, err := r.c.content.Negotiator.StreamDecoder(mediaType, params)
+	objectDecoder, streamingSerializer, framer, err := r.c.negotiator.StreamDecoder(mediaType, params)
 	if err != nil {
 		return nil, err
 	}
@@ -988,7 +1036,10 @@ func (r *Request) transformResponse(resp *http.Response, req *http.Request) Resu
 	var decoder runtime.Decoder
 	contentType := resp.Header.Get("Content-Type")
 	if len(contentType) == 0 {
-		contentType = r.c.content.ContentType
+		contentType, _, _ = strings.Cut(req.Header.Get("Accept"), ",")
+	}
+	if len(contentType) == 0 && r.c.negotiator != nil {
+		contentType, _, _ = strings.Cut(r.c.negotiator.AcceptContentTypes(schema.GroupVersionKind{}), ",")
 	}
 	if len(contentType) > 0 {
 		var err error
@@ -996,7 +1047,7 @@ func (r *Request) transformResponse(resp *http.Response, req *http.Request) Resu
 		if err != nil {
 			return Result{err: errors.NewInternalError(err)}
 		}
-		decoder, err = r.c.content.Negotiator.Decoder(mediaType, params)
+		decoder, err = r.c.negotiator.Decoder(mediaType, params)
 		if err != nil {
 			// if we fail to negotiate a decoder, treat this as an unstructured error
 			switch {
@@ -1119,7 +1170,7 @@ func (r *Request) newUnstructuredResponseError(body []byte, isTextResponse bool,
 	}
 	var groupResource schema.GroupResource
 	if len(r.resource) > 0 {
-		groupResource.Group = r.c.content.GroupVersion.Group
+		groupResource.Group = r.groupVersion.Group
 		groupResource.Resource = r.resource
 	}
 	return errors.NewGenericServerResponse(

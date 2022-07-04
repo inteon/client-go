@@ -17,6 +17,7 @@ limitations under the License.
 package framework
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -29,39 +30,36 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 )
 
 func NewFakeControllerSource() *FakeControllerSource {
 	return &FakeControllerSource{
-		Items:       map[nnu]runtime.Object{},
-		Broadcaster: watch.NewBroadcaster(100, watch.WaitIfChannelFull),
+		Items: map[nnu]runtime.Object{},
 	}
 }
 
 func NewFakePVControllerSource() *FakePVControllerSource {
 	return &FakePVControllerSource{
 		FakeControllerSource{
-			Items:       map[nnu]runtime.Object{},
-			Broadcaster: watch.NewBroadcaster(100, watch.WaitIfChannelFull),
+			Items: map[nnu]runtime.Object{},
 		}}
 }
 
 func NewFakePVCControllerSource() *FakePVCControllerSource {
 	return &FakePVCControllerSource{
 		FakeControllerSource{
-			Items:       map[nnu]runtime.Object{},
-			Broadcaster: watch.NewBroadcaster(100, watch.WaitIfChannelFull),
+			Items: map[nnu]runtime.Object{},
 		}}
 }
 
 // FakeControllerSource implements listing/watching for testing.
 type FakeControllerSource struct {
-	lock        sync.RWMutex
-	Items       map[nnu]runtime.Object
-	changes     []watch.Event // one change per resourceVersion
-	Broadcaster *watch.Broadcaster
-	lastRV      int
+	lock           sync.RWMutex
+	Items          map[nnu]runtime.Object
+	changes        []watch.Event // one change per resourceVersion
+	BoundedWatcher *watch.BoundedWatcher
+	lastRV         int
 
 	// Set this to simulate an error on List()
 	ListError error
@@ -86,48 +84,50 @@ type nnu struct {
 func (f *FakeControllerSource) ResetWatch() {
 	f.lock.Lock()
 	defer f.lock.Unlock()
-	f.Broadcaster.Shutdown()
-	f.Broadcaster = watch.NewBroadcaster(100, watch.WaitIfChannelFull)
+	if f.BoundedWatcher != nil {
+		f.BoundedWatcher.Close()
+	}
+	f.BoundedWatcher = nil
 	f.changes = []watch.Event{}
 }
 
 // Add adds an object to the set and sends an add event to watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) Add(obj runtime.Object) {
-	f.Change(watch.Event{Type: watch.Added, Object: obj}, 1)
+func (f *FakeControllerSource) Add(ctx context.Context, obj runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Added, Object: obj}, 1)
 }
 
 // Modify updates an object in the set and sends a modified event to watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) Modify(obj runtime.Object) {
-	f.Change(watch.Event{Type: watch.Modified, Object: obj}, 1)
+func (f *FakeControllerSource) Modify(ctx context.Context, obj runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Modified, Object: obj}, 1)
 }
 
 // Delete deletes an object from the set and sends a delete event to watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) Delete(lastValue runtime.Object) {
-	f.Change(watch.Event{Type: watch.Deleted, Object: lastValue}, 1)
+func (f *FakeControllerSource) Delete(ctx context.Context, lastValue runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Deleted, Object: lastValue}, 1)
 }
 
 // AddDropWatch adds an object to the set but forgets to send an add event to
 // watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) AddDropWatch(obj runtime.Object) {
-	f.Change(watch.Event{Type: watch.Added, Object: obj}, 0)
+func (f *FakeControllerSource) AddDropWatch(ctx context.Context, obj runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Added, Object: obj}, 0)
 }
 
 // ModifyDropWatch updates an object in the set but forgets to send a modify
 // event to watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) ModifyDropWatch(obj runtime.Object) {
-	f.Change(watch.Event{Type: watch.Modified, Object: obj}, 0)
+func (f *FakeControllerSource) ModifyDropWatch(ctx context.Context, obj runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Modified, Object: obj}, 0)
 }
 
 // DeleteDropWatch deletes an object from the set but forgets to send a delete
 // event to watchers.
 // obj's ResourceVersion is set.
-func (f *FakeControllerSource) DeleteDropWatch(lastValue runtime.Object) {
-	f.Change(watch.Event{Type: watch.Deleted, Object: lastValue}, 0)
+func (f *FakeControllerSource) DeleteDropWatch(ctx context.Context, lastValue runtime.Object) {
+	f.Change(ctx, watch.Event{Type: watch.Deleted, Object: lastValue}, 0)
 }
 
 func (f *FakeControllerSource) key(accessor metav1.Object) nnu {
@@ -136,7 +136,7 @@ func (f *FakeControllerSource) key(accessor metav1.Object) nnu {
 
 // Change records the given event (setting the object's resource version) and
 // sends a watch event with the specified probability.
-func (f *FakeControllerSource) Change(e watch.Event, watchProbability float64) {
+func (f *FakeControllerSource) Change(ctx context.Context, e watch.Event, watchProbability float64) {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
@@ -156,8 +156,8 @@ func (f *FakeControllerSource) Change(e watch.Event, watchProbability float64) {
 		delete(f.Items, key)
 	}
 
-	if rand.Float64() < watchProbability {
-		f.Broadcaster.Action(e.Type, e.Object)
+	if rand.Float64() < watchProbability && f.BoundedWatcher != nil {
+		f.BoundedWatcher.Action(ctx, e.Type, e.Object)
 	}
 }
 
@@ -174,7 +174,7 @@ func (f *FakeControllerSource) getListItemsLocked() ([]runtime.Object, error) {
 }
 
 // List returns a list object, with its resource version set.
-func (f *FakeControllerSource) List(options metav1.ListOptions) (runtime.Object, error) {
+func (f *FakeControllerSource) List(_ context.Context, options metav1.ListOptions) (runtime.Object, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 
@@ -199,7 +199,7 @@ func (f *FakeControllerSource) List(options metav1.ListOptions) (runtime.Object,
 }
 
 // List returns a list object, with its resource version set.
-func (f *FakePVControllerSource) List(options metav1.ListOptions) (runtime.Object, error) {
+func (f *FakePVControllerSource) List(_ context.Context, options metav1.ListOptions) (runtime.Object, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 	list, err := f.FakeControllerSource.getListItemsLocked()
@@ -219,7 +219,7 @@ func (f *FakePVControllerSource) List(options metav1.ListOptions) (runtime.Objec
 }
 
 // List returns a list object, with its resource version set.
-func (f *FakePVCControllerSource) List(options metav1.ListOptions) (runtime.Object, error) {
+func (f *FakePVCControllerSource) List(_ context.Context, options metav1.ListOptions) (runtime.Object, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 	list, err := f.FakeControllerSource.getListItemsLocked()
@@ -240,7 +240,7 @@ func (f *FakePVCControllerSource) List(options metav1.ListOptions) (runtime.Obje
 
 // Watch returns a watch, which will be pre-populated with all changes
 // after resourceVersion.
-func (f *FakeControllerSource) Watch(options metav1.ListOptions) (watch.Interface, error) {
+func (f *FakeControllerSource) Watch(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 	rc, err := strconv.Atoi(options.ResourceVersion)
@@ -266,26 +266,21 @@ func (f *FakeControllerSource) Watch(options metav1.ListOptions) (watch.Interfac
 			return nil, apierrors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", rc, oldestRC))
 		}
 
-		changes := []watch.Event{}
+		f.BoundedWatcher = watch.NewBoundedWatcherWithSize(len(f.changes[rc-oldestRC+1:]) + 100)
 		for _, c := range f.changes[rc-oldestRC+1:] {
 			// Must make a copy to allow clients to modify the
 			// object.  Otherwise, if they make a change and write
 			// it back, they will inadvertently change the our
 			// canonical copy (in addition to racing with other
 			// clients).
-			changes = append(changes, watch.Event{Type: c.Type, Object: c.Object.DeepCopyObject()})
+			f.BoundedWatcher.TryAction(c.Type, c.Object.DeepCopyObject())
 		}
-		return f.Broadcaster.WatchWithPrefix(changes)
+
+		return f.BoundedWatcher, nil
 	} else if rc > f.lastRV {
 		return nil, errors.New("resource version in the future not supported by this fake")
 	}
-	return f.Broadcaster.Watch()
-}
 
-// Shutdown closes the underlying broadcaster, waiting for events to be
-// delivered. It's an error to call any method after calling shutdown. This is
-// enforced by Shutdown() leaving f locked.
-func (f *FakeControllerSource) Shutdown() {
-	f.lock.Lock() // Purposely no unlock.
-	f.Broadcaster.Shutdown()
+	f.BoundedWatcher = watch.NewBoundedWatcherWithSize(100)
+	return f.BoundedWatcher, nil
 }

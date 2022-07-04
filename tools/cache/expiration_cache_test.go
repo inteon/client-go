@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -28,6 +29,9 @@ import (
 )
 
 func TestTTLExpirationBasic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	testObj := testStoreObject{id: "foo", val: "bar"}
 	deleteChan := make(chan string, 1)
 	ttlStore := NewFakeExpirationStore(
@@ -40,7 +44,7 @@ func TestTTLExpirationBasic(t *testing.T) {
 		},
 		clock.RealClock{},
 	)
-	err := ttlStore.Add(testObj)
+	err := ttlStore.Add(ctx, testObj)
 	if err != nil {
 		t.Errorf("Unable to add obj %#v", testObj)
 	}
@@ -64,6 +68,9 @@ func TestTTLExpirationBasic(t *testing.T) {
 }
 
 func TestReAddExpiredItem(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	deleteChan := make(chan string, 1)
 	exp := &FakeExpirationPolicy{
 		NeverExpire: sets.NewString(),
@@ -75,7 +82,7 @@ func TestReAddExpiredItem(t *testing.T) {
 		testStoreKeyFunc, deleteChan, exp, clock.RealClock{})
 	testKey := "foo"
 	testObj := testStoreObject{id: testKey, val: "bar"}
-	err := ttlStore.Add(testObj)
+	err := ttlStore.Add(ctx, testObj)
 	if err != nil {
 		t.Errorf("Unable to add obj %#v", testObj)
 	}
@@ -91,7 +98,7 @@ func TestReAddExpiredItem(t *testing.T) {
 
 	key, _ := testStoreKeyFunc(testObj)
 	differentValue := "different_bar"
-	err = ttlStore.Add(
+	err = ttlStore.Add(ctx,
 		testStoreObject{id: testKey, val: differentValue})
 	if err != nil {
 		t.Errorf("Failed to add second value")
@@ -117,6 +124,9 @@ func TestReAddExpiredItem(t *testing.T) {
 }
 
 func TestTTLList(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	testObjs := []testStoreObject{
 		{id: "foo", val: "bar"},
 		{id: "foo1", val: "bar1"},
@@ -137,7 +147,7 @@ func TestTTLList(t *testing.T) {
 		clock.RealClock{},
 	)
 	for _, obj := range testObjs {
-		err := ttlStore.Add(obj)
+		err := ttlStore.Add(ctx, obj)
 		if err != nil {
 			t.Errorf("Unable to add obj %#v", obj)
 		}

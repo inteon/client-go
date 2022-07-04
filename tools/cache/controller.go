@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -55,22 +56,6 @@ type Config struct {
 	// `"apiVersion"` and `"kind"` must also be right.
 	ObjectType runtime.Object
 
-	// FullResyncPeriod is the period at which ShouldResync is considered.
-	FullResyncPeriod time.Duration
-
-	// ShouldResync is periodically used by the reflector to determine
-	// whether to Resync the Queue. If ShouldResync is `nil` or
-	// returns true, it means the reflector should proceed with the
-	// resync.
-	ShouldResync ShouldResyncFunc
-
-	// If true, when Process() returns an error, re-enqueue the object.
-	// TODO: add interface to let you inject a delay/backoff or drop
-	//       the object completely if desired. Pass the object in
-	//       question to this interface as a parameter.  This is probably moot
-	//       now that this functionality appears at a higher level.
-	RetryOnError bool
-
 	// Called whenever the ListAndWatch drops the connection with an error.
 	WatchErrorHandler WatchErrorHandler
 
@@ -78,13 +63,8 @@ type Config struct {
 	WatchListPageSize int64
 }
 
-// ShouldResyncFunc is a type of function that indicates if a reflector should perform a
-// resync or not. It can be used by a shared informer to support multiple event handlers with custom
-// resync periods.
-type ShouldResyncFunc func() bool
-
 // ProcessFunc processes a single object.
-type ProcessFunc func(obj interface{}) error
+type ProcessFunc func(ctx context.Context, obj interface{}) error
 
 // `*controller` implements Controller
 type controller struct {
@@ -103,10 +83,10 @@ type Controller interface {
 	// on that Queue.  The other is to repeatedly Pop from the Queue
 	// and process with the Config's ProcessFunc.  Both of these
 	// continue until `stopCh` is closed.
-	Run(stopCh <-chan struct{})
+	Run(ctx context.Context)
 
 	// HasSynced delegates to the Config's Queue
-	HasSynced() bool
+	HasSynced() <-chan struct{}
 
 	// LastSyncResourceVersion delegates to the Reflector when there
 	// is one, otherwise returns the empty string
@@ -125,19 +105,18 @@ func New(c *Config) Controller {
 // Run begins processing items, and will continue until a value is sent down stopCh or it is closed.
 // It's an error to call Run more than once.
 // Run blocks; call via go.
-func (c *controller) Run(stopCh <-chan struct{}) {
+func (c *controller) Run(ctx context.Context) {
 	defer utilruntime.HandleCrash()
 	go func() {
-		<-stopCh
+		<-ctx.Done()
 		c.config.Queue.Close()
 	}()
+
 	r := NewReflector(
 		c.config.ListerWatcher,
 		c.config.ObjectType,
 		c.config.Queue,
-		c.config.FullResyncPeriod,
 	)
-	r.ShouldResync = c.config.ShouldResync
 	r.WatchListPageSize = c.config.WatchListPageSize
 	r.clock = c.clock
 	if c.config.WatchErrorHandler != nil {
@@ -150,14 +129,14 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 
 	var wg wait.Group
 
-	wg.StartWithChannel(stopCh, r.Run)
+	wg.StartWithContext(ctx, r.Run)
 
-	wait.Until(c.processLoop, time.Second, stopCh)
+	wait.UntilWithContext(ctx, c.processLoop, time.Second)
 	wg.Wait()
 }
 
 // Returns true once this controller has completed an initial resource listing
-func (c *controller) HasSynced() bool {
+func (c *controller) HasSynced() <-chan struct{} {
 	return c.config.Queue.HasSynced()
 }
 
@@ -174,21 +153,12 @@ func (c *controller) LastSyncResourceVersion() string {
 // TODO: Consider doing the processing in parallel. This will require a little thought
 // to make sure that we don't end up processing the same object multiple times
 // concurrently.
-//
-// TODO: Plumb through the stopCh here (and down to the queue) so that this can
-// actually exit when the controller is stopped. Or just give up on this stuff
-// ever being stoppable. Converting this whole package to use Context would
-// also be helpful.
-func (c *controller) processLoop() {
+func (c *controller) processLoop(ctx context.Context) {
 	for {
-		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
+		_, err := c.config.Queue.PopAndProcess(ctx, PopFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {
 				return
-			}
-			if c.config.RetryOnError {
-				// This is the safe way to re-enqueue.
-				c.config.Queue.AddIfNotPresent(obj)
 			}
 		}
 	}
@@ -211,9 +181,9 @@ func (c *controller) processLoop() {
 //      happen if the watch is closed and misses the delete event and we don't
 //      notice the deletion until the subsequent re-list.
 type ResourceEventHandler interface {
-	OnAdd(obj interface{})
-	OnUpdate(oldObj, newObj interface{})
-	OnDelete(obj interface{})
+	OnAdd(ctx context.Context, obj interface{})
+	OnUpdate(ctx context.Context, oldObj, newObj interface{})
+	OnDelete(ctx context.Context, obj interface{})
 }
 
 // ResourceEventHandlerFuncs is an adaptor to let you easily specify as many or
@@ -221,29 +191,29 @@ type ResourceEventHandler interface {
 // ResourceEventHandler.  This adapter does not remove the prohibition against
 // modifying the objects.
 type ResourceEventHandlerFuncs struct {
-	AddFunc    func(obj interface{})
-	UpdateFunc func(oldObj, newObj interface{})
-	DeleteFunc func(obj interface{})
+	AddFunc    func(ctx context.Context, obj interface{})
+	UpdateFunc func(ctx context.Context, oldObj, newObj interface{})
+	DeleteFunc func(ctx context.Context, obj interface{})
 }
 
 // OnAdd calls AddFunc if it's not nil.
-func (r ResourceEventHandlerFuncs) OnAdd(obj interface{}) {
+func (r ResourceEventHandlerFuncs) OnAdd(ctx context.Context, obj interface{}) {
 	if r.AddFunc != nil {
-		r.AddFunc(obj)
+		r.AddFunc(ctx, obj)
 	}
 }
 
 // OnUpdate calls UpdateFunc if it's not nil.
-func (r ResourceEventHandlerFuncs) OnUpdate(oldObj, newObj interface{}) {
+func (r ResourceEventHandlerFuncs) OnUpdate(ctx context.Context, oldObj, newObj interface{}) {
 	if r.UpdateFunc != nil {
-		r.UpdateFunc(oldObj, newObj)
+		r.UpdateFunc(ctx, oldObj, newObj)
 	}
 }
 
 // OnDelete calls DeleteFunc if it's not nil.
-func (r ResourceEventHandlerFuncs) OnDelete(obj interface{}) {
+func (r ResourceEventHandlerFuncs) OnDelete(ctx context.Context, obj interface{}) {
 	if r.DeleteFunc != nil {
-		r.DeleteFunc(obj)
+		r.DeleteFunc(ctx, obj)
 	}
 }
 
@@ -258,35 +228,35 @@ type FilteringResourceEventHandler struct {
 }
 
 // OnAdd calls the nested handler only if the filter succeeds
-func (r FilteringResourceEventHandler) OnAdd(obj interface{}) {
+func (r FilteringResourceEventHandler) OnAdd(ctx context.Context, obj interface{}) {
 	if !r.FilterFunc(obj) {
 		return
 	}
-	r.Handler.OnAdd(obj)
+	r.Handler.OnAdd(ctx, obj)
 }
 
 // OnUpdate ensures the proper handler is called depending on whether the filter matches
-func (r FilteringResourceEventHandler) OnUpdate(oldObj, newObj interface{}) {
+func (r FilteringResourceEventHandler) OnUpdate(ctx context.Context, oldObj, newObj interface{}) {
 	newer := r.FilterFunc(newObj)
 	older := r.FilterFunc(oldObj)
 	switch {
 	case newer && older:
-		r.Handler.OnUpdate(oldObj, newObj)
+		r.Handler.OnUpdate(ctx, oldObj, newObj)
 	case newer && !older:
-		r.Handler.OnAdd(newObj)
+		r.Handler.OnAdd(ctx, newObj)
 	case !newer && older:
-		r.Handler.OnDelete(oldObj)
+		r.Handler.OnDelete(ctx, oldObj)
 	default:
 		// do nothing
 	}
 }
 
 // OnDelete calls the nested handler only if the filter succeeds
-func (r FilteringResourceEventHandler) OnDelete(obj interface{}) {
+func (r FilteringResourceEventHandler) OnDelete(ctx context.Context, obj interface{}) {
 	if !r.FilterFunc(obj) {
 		return
 	}
-	r.Handler.OnDelete(obj)
+	r.Handler.OnDelete(ctx, obj)
 }
 
 // DeletionHandlingMetaNamespaceKeyFunc checks for
@@ -317,13 +287,12 @@ func DeletionHandlingMetaNamespaceKeyFunc(obj interface{}) (string, error) {
 func NewInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
-	resyncPeriod time.Duration,
 	h ResourceEventHandler,
 ) (Store, Controller) {
 	// This will hold the client state, as we know it.
 	clientState := NewStore(DeletionHandlingMetaNamespaceKeyFunc)
 
-	return clientState, newInformer(lw, objType, resyncPeriod, h, clientState, nil)
+	return clientState, newInformer(lw, objType, h, clientState, nil)
 }
 
 // NewIndexerInformer returns an Indexer and a Controller for populating the index
@@ -345,14 +314,13 @@ func NewInformer(
 func NewIndexerInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
-	resyncPeriod time.Duration,
 	h ResourceEventHandler,
 	indexers Indexers,
 ) (Indexer, Controller) {
 	// This will hold the client state, as we know it.
 	clientState := NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers)
 
-	return clientState, newInformer(lw, objType, resyncPeriod, h, clientState, nil)
+	return clientState, newInformer(lw, objType, h, clientState, nil)
 }
 
 // TransformFunc allows for transforming an object before it will be processed
@@ -376,14 +344,13 @@ type TransformFunc func(interface{}) (interface{}, error)
 func NewTransformingInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
-	resyncPeriod time.Duration,
 	h ResourceEventHandler,
 	transformer TransformFunc,
 ) (Store, Controller) {
 	// This will hold the client state, as we know it.
 	clientState := NewStore(DeletionHandlingMetaNamespaceKeyFunc)
 
-	return clientState, newInformer(lw, objType, resyncPeriod, h, clientState, transformer)
+	return clientState, newInformer(lw, objType, h, clientState, transformer)
 }
 
 // NewTransformingIndexerInformer returns an Indexer and a controller for
@@ -396,7 +363,6 @@ func NewTransformingInformer(
 func NewTransformingIndexerInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
-	resyncPeriod time.Duration,
 	h ResourceEventHandler,
 	indexers Indexers,
 	transformer TransformFunc,
@@ -404,12 +370,13 @@ func NewTransformingIndexerInformer(
 	// This will hold the client state, as we know it.
 	clientState := NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers)
 
-	return clientState, newInformer(lw, objType, resyncPeriod, h, clientState, transformer)
+	return clientState, newInformer(lw, objType, h, clientState, transformer)
 }
 
 // Multiplexes updates in the form of a list of Deltas into a Store, and informs
 // a given handler of events OnUpdate, OnAdd, OnDelete
 func processDeltas(
+	ctx context.Context,
 	// Object which receives event notifications from the given deltas
 	handler ResourceEventHandler,
 	clientState Store,
@@ -430,21 +397,21 @@ func processDeltas(
 		switch d.Type {
 		case Sync, Replaced, Added, Updated:
 			if old, exists, err := clientState.Get(obj); err == nil && exists {
-				if err := clientState.Update(obj); err != nil {
+				if err := clientState.Update(ctx, obj); err != nil {
 					return err
 				}
-				handler.OnUpdate(old, obj)
+				handler.OnUpdate(ctx, old, obj)
 			} else {
-				if err := clientState.Add(obj); err != nil {
+				if err := clientState.Add(ctx, obj); err != nil {
 					return err
 				}
-				handler.OnAdd(obj)
+				handler.OnAdd(ctx, obj)
 			}
 		case Deleted:
-			if err := clientState.Delete(obj); err != nil {
+			if err := clientState.Delete(ctx, obj); err != nil {
 				return err
 			}
-			handler.OnDelete(obj)
+			handler.OnDelete(ctx, obj)
 		}
 	}
 	return nil
@@ -467,7 +434,6 @@ func processDeltas(
 func newInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
-	resyncPeriod time.Duration,
 	h ResourceEventHandler,
 	clientState Store,
 	transformer TransformFunc,
@@ -475,21 +441,16 @@ func newInformer(
 	// This will hold incoming changes. Note how we pass clientState in as a
 	// KeyLister, that way resync operations will result in the correct set
 	// of update/delete deltas.
-	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
-		KnownObjects:          clientState,
-		EmitDeltaTypeReplaced: true,
-	})
+	fifo := NewDeltaFIFO(KnownObjectsQueueOption(clientState))
 
 	cfg := &Config{
-		Queue:            fifo,
-		ListerWatcher:    lw,
-		ObjectType:       objType,
-		FullResyncPeriod: resyncPeriod,
-		RetryOnError:     false,
+		Queue:         fifo,
+		ListerWatcher: lw,
+		ObjectType:    objType,
 
-		Process: func(obj interface{}) error {
+		Process: func(ctx context.Context, obj interface{}) error {
 			if deltas, ok := obj.(Deltas); ok {
-				return processDeltas(h, clientState, transformer, deltas)
+				return processDeltas(ctx, h, clientState, transformer, deltas)
 			}
 			return errors.New("object given as Process argument is not Deltas")
 		},

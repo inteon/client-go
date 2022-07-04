@@ -26,11 +26,13 @@ type fakeThreadSafeMap struct {
 	deletedKeys chan<- string
 }
 
-func (c *fakeThreadSafeMap) Delete(key string) {
+func (c *fakeThreadSafeMap) Delete(key string) error {
 	if c.deletedKeys != nil {
-		c.ThreadSafeStore.Delete(key)
+		err := c.ThreadSafeStore.Delete(key)
 		c.deletedKeys <- key
+		return err
 	}
+	return nil
 }
 
 // FakeExpirationPolicy keeps the list for keys which never expires.
@@ -47,7 +49,7 @@ func (p *FakeExpirationPolicy) IsExpired(obj *TimestampedEntry) bool {
 
 // NewFakeExpirationStore creates a new instance for the ExpirationCache.
 func NewFakeExpirationStore(keyFunc KeyFunc, deletedKeys chan<- string, expirationPolicy ExpirationPolicy, cacheClock clock.Clock) Store {
-	cacheStorage := NewThreadSafeStore(Indexers{}, Indices{})
+	cacheStorage := NewThreadSafeStore(Indexers{})
 	return &ExpirationCache{
 		cacheStorage:     &fakeThreadSafeMap{cacheStorage, deletedKeys},
 		keyFunc:          keyFunc,

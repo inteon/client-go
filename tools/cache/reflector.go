@@ -36,7 +36,8 @@ import (
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/pager"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -72,9 +73,6 @@ type Reflector struct {
 	// initConnBackoffManager manages backoff the initial connection with the Watch call of ListAndWatch.
 	initConnBackoffManager wait.BackoffManager
 
-	resyncPeriod time.Duration
-	// ShouldResync is invoked periodically and whenever it returns `true` the Store's Resync operation is invoked
-	ShouldResync func() bool
 	// clock allows tests to manipulate time
 	clock clock.Clock
 	// paginatedResult defines whether pagination should be forced for list calls.
@@ -147,28 +145,22 @@ var (
 
 // NewNamespaceKeyedIndexerAndReflector creates an Indexer and a Reflector
 // The indexer is configured to key on namespace
-func NewNamespaceKeyedIndexerAndReflector(lw ListerWatcher, expectedType interface{}, resyncPeriod time.Duration) (indexer Indexer, reflector *Reflector) {
+func NewNamespaceKeyedIndexerAndReflector(lw ListerWatcher, expectedType interface{}) (indexer Indexer, reflector *Reflector) {
 	indexer = NewIndexer(MetaNamespaceKeyFunc, Indexers{NamespaceIndex: MetaNamespaceIndexFunc})
-	reflector = NewReflector(lw, expectedType, indexer, resyncPeriod)
+	reflector = NewReflector(lw, expectedType, indexer)
 	return indexer, reflector
 }
 
 // NewReflector creates a new Reflector object which will keep the
 // given store up to date with the server's contents for the given
 // resource. Reflector promises to only put things in the store that
-// have the type of expectedType, unless expectedType is nil. If
-// resyncPeriod is non-zero, then the reflector will periodically
-// consult its ShouldResync function to determine whether to invoke
-// the Store's Resync operation; `ShouldResync==nil` means always
-// "yes".  This enables you to use reflectors to periodically process
-// everything as well as incrementally processing the things that
-// change.
-func NewReflector(lw ListerWatcher, expectedType interface{}, store Store, resyncPeriod time.Duration) *Reflector {
-	return NewNamedReflector(naming.GetNameFromCallsite(internalPackages...), lw, expectedType, store, resyncPeriod)
+// have the type of expectedType, unless expectedType is nil.
+func NewReflector(lw ListerWatcher, expectedType interface{}, store Store) *Reflector {
+	return NewNamedReflector(naming.GetNameFromCallsite(internalPackages...), lw, expectedType, store)
 }
 
 // NewNamedReflector same as NewReflector, but with a specified name for logging
-func NewNamedReflector(name string, lw ListerWatcher, expectedType interface{}, store Store, resyncPeriod time.Duration) *Reflector {
+func NewNamedReflector(name string, lw ListerWatcher, expectedType interface{}, store Store) *Reflector {
 	realClock := &clock.RealClock{}
 	r := &Reflector{
 		name:          name,
@@ -179,7 +171,6 @@ func NewNamedReflector(name string, lw ListerWatcher, expectedType interface{}, 
 		// 0.22 QPS. If we don't backoff for 2min, assume API server is healthy and we reset the backoff.
 		backoffManager:         wait.NewExponentialBackoffManager(800*time.Millisecond, 30*time.Second, 2*time.Minute, 2.0, 1.0, realClock),
 		initConnBackoffManager: wait.NewExponentialBackoffManager(800*time.Millisecond, 30*time.Second, 2*time.Minute, 2.0, 1.0, realClock),
-		resyncPeriod:           resyncPeriod,
 		clock:                  realClock,
 		watchErrorHandler:      WatchErrorHandler(DefaultWatchErrorHandler),
 	}
@@ -215,110 +206,75 @@ var internalPackages = []string{"client-go/tools/cache/"}
 // Run repeatedly uses the reflector's ListAndWatch to fetch all the
 // objects and subsequent deltas.
 // Run will exit when stopCh is closed.
-func (r *Reflector) Run(stopCh <-chan struct{}) {
-	klog.V(3).Infof("Starting reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
+func (r *Reflector) Run(ctx context.Context) {
+	klog.V(3).Infof("Starting reflector %s from %s", r.expectedTypeName, r.name)
 	wait.BackoffUntil(func() {
-		if err := r.ListAndWatch(stopCh); err != nil {
+		if err := r.ListAndWatch(ctx); err != nil {
 			r.watchErrorHandler(r, err)
 		}
-	}, r.backoffManager, true, stopCh)
-	klog.V(3).Infof("Stopping reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
+	}, r.backoffManager, true, ctx.Done())
+	klog.V(3).Infof("Stopping reflector %s from %s", r.expectedTypeName, r.name)
 }
 
 var (
-	// nothing will ever be sent down this channel
-	neverExitWatch <-chan time.Time = make(chan time.Time)
-
 	// Used to indicate that watching stopped because of a signal from the stop
 	// channel passed in from a client of the reflector.
 	errorStopRequested = errors.New("stop requested")
 )
 
-// resyncChan returns a channel which will receive something when a resync is
-// required, and a cleanup function.
-func (r *Reflector) resyncChan() (<-chan time.Time, func() bool) {
-	if r.resyncPeriod == 0 {
-		return neverExitWatch, func() bool { return false }
-	}
-	// The cleanup function is required: imagine the scenario where watches
-	// always fail so we end up listing frequently. Then, if we don't
-	// manually stop the timer, we could end up with many timers active
-	// concurrently.
-	t := r.clock.NewTimer(r.resyncPeriod)
-	return t.C(), t.Stop
-}
-
 // ListAndWatch first lists all items and get the resource version at the moment of call,
 // and then use the resource version to watch.
 // It returns error if ListAndWatch didn't even try to initialize watch.
-func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
+func (r *Reflector) ListAndWatch(ctx context.Context) error {
 	klog.V(3).Infof("Listing and watching %v from %s", r.expectedTypeName, r.name)
 	var resourceVersion string
 
-	options := metav1.ListOptions{ResourceVersion: r.relistResourceVersion()}
-
+	// List all objects
 	if err := func() error {
 		initTrace := trace.New("Reflector ListAndWatch", trace.Field{Key: "name", Value: r.name})
 		defer initTrace.LogIfLong(10 * time.Second)
-		var list runtime.Object
-		var paginatedResult bool
-		var err error
-		listCh := make(chan struct{}, 1)
-		panicCh := make(chan interface{}, 1)
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					panicCh <- r
-				}
-			}()
-			// Attempt to gather list in chunks, if supported by listerWatcher, if not, the first
-			// list request will return the full response.
-			pager := pager.New(pager.SimplePageFunc(func(opts metav1.ListOptions) (runtime.Object, error) {
-				return r.listerWatcher.List(opts)
-			}))
-			switch {
-			case r.WatchListPageSize != 0:
-				pager.PageSize = r.WatchListPageSize
-			case r.paginatedResult:
-				// We got a paginated result initially. Assume this resource and server honor
-				// paging requests (i.e. watch cache is probably disabled) and leave the default
-				// pager size set.
-			case options.ResourceVersion != "" && options.ResourceVersion != "0":
-				// User didn't explicitly request pagination.
-				//
-				// With ResourceVersion != "", we have a possibility to list from watch cache,
-				// but we do that (for ResourceVersion != "0") only if Limit is unset.
-				// To avoid thundering herd on etcd (e.g. on master upgrades), we explicitly
-				// switch off pagination to force listing from watch cache (if enabled).
-				// With the existing semantic of RV (result is at least as fresh as provided RV),
-				// this is correct and doesn't lead to going back in time.
-				//
-				// We also don't turn off pagination for ResourceVersion="0", since watch cache
-				// is ignoring Limit in that case anyway, and if watch cache is not enabled
-				// we don't introduce regression.
-				pager.PageSize = 0
-			}
 
-			list, paginatedResult, err = pager.List(context.Background(), options)
-			if isExpiredError(err) || isTooLargeResourceVersionError(err) {
-				r.setIsLastSyncResourceVersionUnavailable(true)
-				// Retry immediately if the resource version used to list is unavailable.
-				// The pager already falls back to full list if paginated list calls fail due to an "Expired" error on
-				// continuation pages, but the pager might not be enabled, the full list might fail because the
-				// resource version it is listing at is expired or the cache may not yet be synced to the provided
-				// resource version. So we need to fallback to resourceVersion="" in all to recover and ensure
-				// the reflector makes forward progress.
-				list, paginatedResult, err = pager.List(context.Background(), metav1.ListOptions{ResourceVersion: r.relistResourceVersion()})
-			}
-			close(listCh)
-		}()
-		select {
-		case <-stopCh:
-			return nil
-		case r := <-panicCh:
-			panic(r)
-		case <-listCh:
+		options := metav1.ListOptions{ResourceVersion: r.relistResourceVersion()}
+
+		// Attempt to gather list in chunks, if supported by listerWatcher, if not, the first
+		// list request will return the full response.
+		pager := pager.New(r.listerWatcher.List)
+
+		switch {
+		case r.WatchListPageSize != 0:
+			pager.PageSize = r.WatchListPageSize
+		case r.paginatedResult:
+			// We got a paginated result initially. Assume this resource and server honor
+			// paging requests (i.e. watch cache is probably disabled) and leave the default
+			// pager size set.
+		case options.ResourceVersion != "" && options.ResourceVersion != "0":
+			// User didn't explicitly request pagination.
+			//
+			// With ResourceVersion != "", we have a possibility to list from watch cache,
+			// but we do that (for ResourceVersion != "0") only if Limit is unset.
+			// To avoid thundering herd on etcd (e.g. on master upgrades), we explicitly
+			// switch off pagination to force listing from watch cache (if enabled).
+			// With the existing semantic of RV (result is at least as fresh as provided RV),
+			// this is correct and doesn't lead to going back in time.
+			//
+			// We also don't turn off pagination for ResourceVersion="0", since watch cache
+			// is ignoring Limit in that case anyway, and if watch cache is not enabled
+			// we don't introduce regression.
+			pager.PageSize = 0
 		}
+
+		list, paginatedResult, err := pager.List(ctx, options)
+		if isExpiredError(err) || isTooLargeResourceVersionError(err) {
+			r.setIsLastSyncResourceVersionUnavailable(true)
+			// Retry immediately if the resource version used to list is unavailable.
+			// The pager already falls back to full list if paginated list calls fail due to an "Expired" error on
+			// continuation pages, but the pager might not be enabled, the full list might fail because the
+			// resource version it is listing at is expired or the cache may not yet be synced to the provided
+			// resource version. So we need to fallback to resourceVersion="" in all to recover and ensure
+			// the reflector makes forward progress.
+			list, paginatedResult, err = pager.List(ctx, metav1.ListOptions{ResourceVersion: r.relistResourceVersion()})
+		}
+
 		initTrace.Step("Objects listed", trace.Field{Key: "error", Value: err})
 		if err != nil {
 			klog.Warningf("%s: failed to list %v: %v", r.name, r.expectedTypeName, err)
@@ -351,7 +307,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			return fmt.Errorf("unable to understand list result %#v (%v)", list, err)
 		}
 		initTrace.Step("Objects extracted")
-		if err := r.syncWith(items, resourceVersion); err != nil {
+		if err := r.syncWith(ctx, items, resourceVersion); err != nil {
 			return fmt.Errorf("unable to sync list result: %v", err)
 		}
 		initTrace.Step("SyncWith done")
@@ -362,44 +318,17 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		return err
 	}
 
-	resyncerrc := make(chan error, 1)
-	cancelCh := make(chan struct{})
-	defer close(cancelCh)
-	go func() {
-		resyncCh, cleanup := r.resyncChan()
-		defer func() {
-			cleanup() // Call the last one written into cleanup
-		}()
-		for {
-			select {
-			case <-resyncCh:
-			case <-stopCh:
-				return
-			case <-cancelCh:
-				return
-			}
-			if r.ShouldResync == nil || r.ShouldResync() {
-				klog.V(4).Infof("%s: forcing resync", r.name)
-				if err := r.store.Resync(); err != nil {
-					resyncerrc <- err
-					return
-				}
-			}
-			cleanup()
-			resyncCh, cleanup = r.resyncChan()
-		}
-	}()
-
+	// Watch the objects
 	for {
 		// give the stopCh a chance to stop the loop, even in case of continue statements further down on errors
 		select {
-		case <-stopCh:
+		case <-ctx.Done():
 			return nil
 		default:
 		}
 
 		timeoutSeconds := int64(minWatchTimeout.Seconds() * (rand.Float64() + 1.0))
-		options = metav1.ListOptions{
+		options := metav1.ListOptions{
 			ResourceVersion: resourceVersion,
 			// We want to avoid situations of hanging watchers. Stop any watchers that do not
 			// receive any events within the timeout window.
@@ -412,7 +341,8 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 
 		// start the clock before sending the request, since some proxies won't flush headers until after the first watch event is sent
 		start := r.clock.Now()
-		w, err := r.listerWatcher.Watch(options)
+
+		watcher, err := r.listerWatcher.Watch(ctx, options)
 		if err != nil {
 			// If this is "connection refused" error, it means that most likely apiserver is not responsive.
 			// It doesn't make sense to re-list all objects because most likely we will be able to restart
@@ -420,13 +350,17 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			// If that's the case begin exponentially backing off and resend watch request.
 			// Do the same for "429" errors.
 			if utilnet.IsConnectionRefused(err) || apierrors.IsTooManyRequests(err) {
-				<-r.initConnBackoffManager.Backoff().C()
+				select {
+				case <-r.initConnBackoffManager.Backoff().C():
+				case <-ctx.Done():
+					return nil
+				}
 				continue
 			}
 			return err
 		}
 
-		if err := r.watchHandler(start, w, &resourceVersion, resyncerrc, stopCh); err != nil {
+		if err := r.watchHandler(ctx, start, watcher, &resourceVersion); err != nil {
 			if err != errorStopRequested {
 				switch {
 				case isExpiredError(err):
@@ -436,7 +370,11 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 					klog.V(4).Infof("%s: watch of %v closed with: %v", r.name, r.expectedTypeName, err)
 				case apierrors.IsTooManyRequests(err):
 					klog.V(2).Infof("%s: watch of %v returned 429 - backing off", r.name, r.expectedTypeName)
-					<-r.initConnBackoffManager.Backoff().C()
+					select {
+					case <-r.initConnBackoffManager.Backoff().C():
+					case <-ctx.Done():
+						return nil
+					}
 					continue
 				default:
 					klog.Warningf("%s: watch of %v ended with: %v", r.name, r.expectedTypeName, err)
@@ -448,30 +386,27 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 }
 
 // syncWith replaces the store's items with the given list.
-func (r *Reflector) syncWith(items []runtime.Object, resourceVersion string) error {
+func (r *Reflector) syncWith(ctx context.Context, items []runtime.Object, resourceVersion string) error {
 	found := make([]interface{}, 0, len(items))
 	for _, item := range items {
 		found = append(found, item)
 	}
-	return r.store.Replace(found, resourceVersion)
+	return r.store.Replace(ctx, found, resourceVersion)
 }
 
 // watchHandler watches w and keeps *resourceVersion up to date.
-func (r *Reflector) watchHandler(start time.Time, w watch.Interface, resourceVersion *string, errc chan error, stopCh <-chan struct{}) error {
+func (r *Reflector) watchHandler(ctx context.Context, start time.Time, w watch.Watcher, resourceVersion *string) error {
 	eventCount := 0
 
-	// Stopping the watcher should be idempotent and if we return from this function there's no way
-	// we're coming back in with the same watch interface.
-	defer w.Stop()
+	resultCh, ctx, complete := concurrent.Watch(ctx, w)
+	defer complete()
 
 loop:
 	for {
 		select {
-		case <-stopCh:
+		case <-ctx.Done():
 			return errorStopRequested
-		case err := <-errc:
-			return err
-		case event, ok := <-w.ResultChan():
+		case event, ok := <-resultCh:
 			if !ok {
 				break loop
 			}
@@ -498,20 +433,17 @@ loop:
 			newResourceVersion := meta.GetResourceVersion()
 			switch event.Type {
 			case watch.Added:
-				err := r.store.Add(event.Object)
+				err := r.store.Add(ctx, event.Object)
 				if err != nil {
 					utilruntime.HandleError(fmt.Errorf("%s: unable to add watch event object (%#v) to store: %v", r.name, event.Object, err))
 				}
 			case watch.Modified:
-				err := r.store.Update(event.Object)
+				err := r.store.Update(ctx, event.Object)
 				if err != nil {
 					utilruntime.HandleError(fmt.Errorf("%s: unable to update watch event object (%#v) to store: %v", r.name, event.Object, err))
 				}
 			case watch.Deleted:
-				// TODO: Will any consumers need access to the "last known
-				// state", which is passed in event.Object? If so, may need
-				// to change this.
-				err := r.store.Delete(event.Object)
+				err := r.store.Delete(ctx, event.Object)
 				if err != nil {
 					utilruntime.HandleError(fmt.Errorf("%s: unable to delete watch event object (%#v) from store: %v", r.name, event.Object, err))
 				}

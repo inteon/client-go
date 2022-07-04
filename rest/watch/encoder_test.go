@@ -21,22 +21,28 @@ import (
 	"io/ioutil"
 	"testing"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	runtimejson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	restclientwatch "k8s.io/client-go/rest/watch"
 )
 
-// getEncoder mimics how k8s.io/client-go/rest.createSerializers creates a encoder
-func getEncoder() runtime.Encoder {
-	jsonSerializer := runtimejson.NewSerializer(runtimejson.DefaultMetaFactory, scheme.Scheme, scheme.Scheme, false)
-	directCodecFactory := scheme.Codecs.WithoutConversion()
-	return directCodecFactory.EncoderForVersion(jsonSerializer, v1.SchemeGroupVersion)
+func getEncoder(t testing.TB) runtime.Encoder {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := rest.NewSerializerNegotiator(kubeScheme, false).Encoder(runtime.ContentTypeJSON, nil); err != nil {
+		t.Fatal(err)
+		return nil
+	} else {
+		return d
+	}
 }
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
@@ -64,14 +70,14 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	for i, testCase := range testCases {
 		buf := &bytes.Buffer{}
 
-		encoder := restclientwatch.NewEncoder(streaming.NewEncoder(buf, getEncoder()), getEncoder())
+		encoder := restclientwatch.NewEncoder(streaming.NewEncoder(buf, getEncoder(t)), getEncoder(t))
 		if err := encoder.Encode(&watch.Event{Type: testCase.Type, Object: testCase.Object}); err != nil {
 			t.Errorf("%d: unexpected error: %v", i, err)
 			continue
 		}
 
 		rc := ioutil.NopCloser(buf)
-		decoder := restclientwatch.NewDecoder(streaming.NewDecoder(rc, getDecoder()), getDecoder())
+		decoder := restclientwatch.NewDecoder(streaming.NewDecoder(rc, getDecoder(t)), getDecoder(t))
 		event, obj, err := decoder.Decode()
 		if err != nil {
 			t.Errorf("%d: unexpected error: %v", i, err)

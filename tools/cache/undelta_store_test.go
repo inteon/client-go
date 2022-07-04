@@ -17,8 +17,10 @@ limitations under the License.
 package cache
 
 import (
+	"context"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // store_test.go checks that UndeltaStore conforms to the Store interface
@@ -42,6 +44,9 @@ var (
 */
 
 func TestUpdateCallsPush(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	mkObj := func(name string, val interface{}) testUndeltaObject {
 		return testUndeltaObject{name: name, val: val}
 	}
@@ -55,8 +60,8 @@ func TestUpdateCallsPush(t *testing.T) {
 
 	u := NewUndeltaStore(push, testUndeltaKeyFunc)
 
-	u.Add(mkObj("a", 2))
-	u.Update(mkObj("a", 1))
+	u.Add(ctx, mkObj("a", 2))
+	u.Update(ctx, mkObj("a", 1))
 	if callcount != 2 {
 		t.Errorf("Expected 2 calls, got %d", callcount)
 	}
@@ -68,6 +73,9 @@ func TestUpdateCallsPush(t *testing.T) {
 }
 
 func TestDeleteCallsPush(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	mkObj := func(name string, val interface{}) testUndeltaObject {
 		return testUndeltaObject{name: name, val: val}
 	}
@@ -81,8 +89,8 @@ func TestDeleteCallsPush(t *testing.T) {
 
 	u := NewUndeltaStore(push, testUndeltaKeyFunc)
 
-	u.Add(mkObj("a", 2))
-	u.Delete(mkObj("a", ""))
+	u.Add(ctx, mkObj("a", 2))
+	u.Delete(ctx, mkObj("a", ""))
 	if callcount != 2 {
 		t.Errorf("Expected 2 calls, got %d", callcount)
 	}
@@ -105,6 +113,9 @@ func TestReadsDoNotCallPush(t *testing.T) {
 }
 
 func TestReplaceCallsPush(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	mkObj := func(name string, val interface{}) testUndeltaObject {
 		return testUndeltaObject{name: name, val: val}
 	}
@@ -120,7 +131,7 @@ func TestReplaceCallsPush(t *testing.T) {
 
 	m := []interface{}{mkObj("a", 1)}
 
-	u.Replace(m, "0")
+	u.Replace(ctx, m, "0")
 	if callcount != 1 {
 		t.Errorf("Expected 1 calls, got %d", callcount)
 	}

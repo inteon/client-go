@@ -17,6 +17,7 @@ limitations under the License.
 package testing
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -32,7 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 )
 
 func getArbitraryResource(s schema.GroupVersionResource, name, namespace string) *unstructured.Unstructured {
@@ -63,7 +65,7 @@ func TestWatchCallNonNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	codecs := serializer.NewCodecFactory(scheme)
 	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
-	watch, err := o.Watch(testResource, ns)
+	watcher, err := o.Watch(testResource, ns)
 	if err != nil {
 		t.Fatalf("test resource watch failed in %s: %v ", ns, err)
 	}
@@ -73,7 +75,9 @@ func TestWatchCallNonNamespace(t *testing.T) {
 			t.Errorf("test resource creation failed: %v", err)
 		}
 	}()
-	out := <-watch.ResultChan()
+	channel, _, cancel := concurrent.Watch(context.Background(), watcher)
+	defer cancel()
+	out := <-channel
 	assert.Equal(t, testObj, out.Object, "watched object mismatch")
 }
 
@@ -100,8 +104,12 @@ func TestWatchCallAllNamespace(t *testing.T) {
 		err := o.Create(testResource, testObj, ns)
 		assert.NoError(t, err, "test resource creation failed")
 	}()
-	out := <-w.ResultChan()
-	outAll := <-wAll.ResultChan()
+	channel1, _, cancel1 := concurrent.Watch(context.Background(), w)
+	defer cancel1()
+	out := <-channel1
+	channel2, _, cancel2 := concurrent.Watch(context.Background(), wAll)
+	defer cancel2()
+	outAll := <-channel2
 	assert.Equal(t, watch.Added, out.Type, "watch event mismatch")
 	assert.Equal(t, watch.Added, outAll.Type, "watch event mismatch")
 	assert.Equal(t, testObj, out.Object, "watched created object mismatch")
@@ -110,8 +118,8 @@ func TestWatchCallAllNamespace(t *testing.T) {
 		err := o.Update(testResource, testObj, ns)
 		assert.NoError(t, err, "test resource updating failed")
 	}()
-	out = <-w.ResultChan()
-	outAll = <-wAll.ResultChan()
+	out = <-channel1
+	outAll = <-channel2
 	assert.Equal(t, watch.Modified, out.Type, "watch event mismatch")
 	assert.Equal(t, watch.Modified, outAll.Type, "watch event mismatch")
 	assert.Equal(t, testObj, out.Object, "watched updated object mismatch")
@@ -120,8 +128,8 @@ func TestWatchCallAllNamespace(t *testing.T) {
 		err := o.Delete(testResource, "test_namespace", "test_name")
 		assert.NoError(t, err, "test resource deletion failed")
 	}()
-	out = <-w.ResultChan()
-	outAll = <-wAll.ResultChan()
+	out = <-channel1
+	outAll = <-channel2
 	assert.Equal(t, watch.Deleted, out.Type, "watch event mismatch")
 	assert.Equal(t, watch.Deleted, outAll.Type, "watch event mismatch")
 	assert.Equal(t, testObj, out.Object, "watched deleted object mismatch")
@@ -201,7 +209,9 @@ func TestWatchCallMultipleInvocation(t *testing.T) {
 			for _, c := range cases {
 				if watchNamespace == "" || c.ns == watchNamespace {
 					fmt.Printf("%#v %#v\n", c, i)
-					event := <-w.ResultChan()
+					channel, _, cancel := concurrent.Watch(context.Background(), w)
+					defer cancel()
+					event := <-channel
 					accessor, err := meta.Accessor(event.Object)
 					if err != nil {
 						t.Errorf("unexpected error: %v", err)
@@ -242,10 +252,12 @@ func TestWatchAddAfterStop(t *testing.T) {
 	scheme := runtime.NewScheme()
 	codecs := serializer.NewCodecFactory(scheme)
 	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
-	watch, err := o.Watch(testResource, ns)
+	watcher, err := o.Watch(testResource, ns)
 	if err != nil {
 		t.Errorf("watch creation failed: %v", err)
 	}
+	_, _, cancel := concurrent.Watch(context.Background(), watcher)
+	defer cancel()
 
 	// When the watch is stopped it should ignore later events without panicking.
 	defer func() {
@@ -254,7 +266,7 @@ func TestWatchAddAfterStop(t *testing.T) {
 		}
 	}()
 
-	watch.Stop()
+	cancel()
 	err = o.Create(testResource, testObj, ns)
 	if err != nil {
 		t.Errorf("test resource creation failed: %v", err)

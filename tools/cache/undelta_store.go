@@ -16,6 +16,8 @@ limitations under the License.
 
 package cache
 
+import "context"
+
 // UndeltaStore listens to incremental updates and sends complete state on every change.
 // It implements the Store interface so that it can receive a stream of mirrored objects
 // from Reflector.  Whenever it receives any complete (Store.Replace) or incremental change
@@ -42,8 +44,8 @@ var _ Store = &UndeltaStore{}
 // 3                                         Store.Add(b)
 // 4               Store.List() -> [a,b]
 // 5                                         Store.List() -> [a,b]
-func (u *UndeltaStore) Add(obj interface{}) error {
-	if err := u.Store.Add(obj); err != nil {
+func (u *UndeltaStore) Add(ctx context.Context, obj interface{}) error {
+	if err := u.Store.Add(ctx, obj); err != nil {
 		return err
 	}
 	u.PushFunc(u.Store.List())
@@ -51,8 +53,8 @@ func (u *UndeltaStore) Add(obj interface{}) error {
 }
 
 // Update sets an item in the cache to its updated state and sends complete state by calling PushFunc.
-func (u *UndeltaStore) Update(obj interface{}) error {
-	if err := u.Store.Update(obj); err != nil {
+func (u *UndeltaStore) Update(ctx context.Context, obj interface{}) error {
+	if err := u.Store.Update(ctx, obj); err != nil {
 		return err
 	}
 	u.PushFunc(u.Store.List())
@@ -60,8 +62,8 @@ func (u *UndeltaStore) Update(obj interface{}) error {
 }
 
 // Delete removes an item from the cache and sends complete state by calling PushFunc.
-func (u *UndeltaStore) Delete(obj interface{}) error {
-	if err := u.Store.Delete(obj); err != nil {
+func (u *UndeltaStore) Delete(ctx context.Context, obj interface{}) error {
+	if err := u.Store.Delete(ctx, obj); err != nil {
 		return err
 	}
 	u.PushFunc(u.Store.List())
@@ -72,8 +74,8 @@ func (u *UndeltaStore) Delete(obj interface{}) error {
 // 'u' takes ownership of the list, you should not reference the list again
 // after calling this function.
 // The new contents complete state will be sent by calling PushFunc after replacement.
-func (u *UndeltaStore) Replace(list []interface{}, resourceVersion string) error {
-	if err := u.Store.Replace(list, resourceVersion); err != nil {
+func (u *UndeltaStore) Replace(ctx context.Context, list []interface{}, resourceVersion string) error {
+	if err := u.Store.Replace(ctx, list, resourceVersion); err != nil {
 		return err
 	}
 	u.PushFunc(u.Store.List())

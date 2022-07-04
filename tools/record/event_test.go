@@ -17,6 +17,7 @@ limitations under the License.
 package record
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,14 +29,24 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/pkg/concurrent"
 	restclient "k8s.io/client-go/rest"
 	ref "k8s.io/client-go/tools/reference"
 	"k8s.io/utils/clock"
 	testclocks "k8s.io/utils/clock/testing"
 )
+
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	return kubeScheme
+}
 
 type testEventSink struct {
 	OnCreate func(e *v1.Event) (*v1.Event, error)
@@ -111,7 +122,7 @@ func TestNonRacyShutdown(t *testing.T) {
 
 	caster := NewBroadcasterForTests(0)
 	clock := testclocks.NewFakeClock(time.Now())
-	recorder := recorderWithFakeClock(v1.EventSource{Component: "eventTest"}, caster, clock)
+	recorder := recorderWithFakeClock(t, v1.EventSource{Component: "eventTest"}, caster, clock)
 
 	var wg sync.WaitGroup
 	wg.Add(100)
@@ -141,11 +152,11 @@ func TestEventf(t *testing.T) {
 			UID:       "differentUid",
 		},
 	}
-	testRef, err := ref.GetPartialReference(scheme.Scheme, testPod, "spec.containers[2]")
+	testRef, err := ref.GetPartialReference(newKubeScheme(t), testPod, "spec.containers[2]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	testRef2, err := ref.GetPartialReference(scheme.Scheme, testPod2, "spec.containers[3]")
+	testRef2, err := ref.GetPartialReference(newKubeScheme(t), testPod2, "spec.containers[3]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,18 +381,23 @@ func TestEventf(t *testing.T) {
 		OnPatch: OnPatchFactory(testCache, patchEvent),
 	}
 	eventBroadcaster := NewBroadcasterForTests(0)
-	sinkWatcher := eventBroadcaster.StartRecordingToSink(&testEvents)
+	ctx, cancelRecording := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartRecordingToSink(ctx, &testEvents)
+	})
 
 	clock := testclocks.NewFakeClock(time.Now())
-	recorder := recorderWithFakeClock(v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
+	recorder := recorderWithFakeClock(t, v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
 	for index, item := range table {
 		clock.Step(1 * time.Second)
-		logWatcher := eventBroadcaster.StartLogging(func(formatter string, args ...interface{}) {
-			if e, a := item.expectLog, fmt.Sprintf(formatter, args...); e != a {
-				t.Errorf("Expected '%v', got '%v'", e, a)
-			}
-			logCalled <- struct{}{}
+		_, cancelLogging := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
+			return eventBroadcaster.StartLogging(ctx, func(formatter string, args ...interface{}) {
+				if e, a := item.expectLog, fmt.Sprintf(formatter, args...); e != a {
+					t.Errorf("Expected '%v', got '%v'", e, a)
+				}
+				logCalled <- struct{}{}
+			})
 		})
+
 		recorder.Eventf(item.obj, item.eventtype, item.reason, item.messageFmt, item.elements...)
 
 		<-logCalled
@@ -394,13 +410,13 @@ func TestEventf(t *testing.T) {
 			actualEvent := <-createEvent
 			validateEvent(strconv.Itoa(index), actualEvent, item.expect, t)
 		}
-		logWatcher.Stop()
+		cancelLogging()
 	}
-	sinkWatcher.Stop()
+	cancelRecording()
 }
 
-func recorderWithFakeClock(eventSource v1.EventSource, eventBroadcaster EventBroadcaster, clock clock.Clock) EventRecorder {
-	return &recorderImpl{scheme.Scheme, eventSource, eventBroadcaster.(*eventBroadcasterImpl).Broadcaster, clock}
+func recorderWithFakeClock(t testing.TB, eventSource v1.EventSource, eventBroadcaster EventBroadcaster, clock clock.Clock) EventRecorder {
+	return &recorderImpl{newKubeScheme(t), eventSource, eventBroadcaster.(*eventBroadcasterImpl).BoundedWatcher, clock}
 }
 
 func TestWriteEventError(t *testing.T) {
@@ -517,11 +533,15 @@ func TestLotsOfEvents(t *testing.T) {
 	}
 
 	eventBroadcaster := NewBroadcasterForTests(0)
-	sinkWatcher := eventBroadcaster.StartRecordingToSink(&testEvents)
-	logWatcher := eventBroadcaster.StartLogging(func(formatter string, args ...interface{}) {
-		loggerCalled <- struct{}{}
+	_, cancelRecording := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartRecordingToSink(ctx, &testEvents)
 	})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "eventTest"})
+	_, cancelLogging := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartLogging(ctx, func(formatter string, args ...interface{}) {
+			loggerCalled <- struct{}{}
+		})
+	})
+	recorder := eventBroadcaster.NewRecorder(newKubeScheme(t), v1.EventSource{Component: "eventTest"})
 	for i := 0; i < maxQueuedEvents; i++ {
 		// we want a unique object to stop spam filtering
 		ref := &v1.ObjectReference{
@@ -545,8 +565,8 @@ func TestLotsOfEvents(t *testing.T) {
 			t.Errorf("Only attempted to record event '%d' %d times.", i, counts[i])
 		}
 	}
-	sinkWatcher.Stop()
-	logWatcher.Stop()
+	cancelRecording()
+	cancelLogging()
 }
 
 func TestEventfNoNamespace(t *testing.T) {
@@ -556,7 +576,7 @@ func TestEventfNoNamespace(t *testing.T) {
 			UID:  "bar",
 		},
 	}
-	testRef, err := ref.GetPartialReference(scheme.Scheme, testPod, "spec.containers[2]")
+	testRef, err := ref.GetPartialReference(newKubeScheme(t), testPod, "spec.containers[2]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,18 +634,22 @@ func TestEventfNoNamespace(t *testing.T) {
 		OnPatch: OnPatchFactory(testCache, patchEvent),
 	}
 	eventBroadcaster := NewBroadcasterForTests(0)
-	sinkWatcher := eventBroadcaster.StartRecordingToSink(&testEvents)
+	ctx, cancelRecording := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartRecordingToSink(ctx, &testEvents)
+	})
 
 	clock := testclocks.NewFakeClock(time.Now())
-	recorder := recorderWithFakeClock(v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
+	recorder := recorderWithFakeClock(t, v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
 
 	for index, item := range table {
 		clock.Step(1 * time.Second)
-		logWatcher := eventBroadcaster.StartLogging(func(formatter string, args ...interface{}) {
-			if e, a := item.expectLog, fmt.Sprintf(formatter, args...); e != a {
-				t.Errorf("Expected '%v', got '%v'", e, a)
-			}
-			logCalled <- struct{}{}
+		_, cancelLogging := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
+			return eventBroadcaster.StartLogging(ctx, func(formatter string, args ...interface{}) {
+				if e, a := item.expectLog, fmt.Sprintf(formatter, args...); e != a {
+					t.Errorf("Expected '%v', got '%v'", e, a)
+				}
+				logCalled <- struct{}{}
+			})
 		})
 		recorder.Eventf(item.obj, item.eventtype, item.reason, item.messageFmt, item.elements...)
 
@@ -640,9 +664,9 @@ func TestEventfNoNamespace(t *testing.T) {
 			validateEvent(strconv.Itoa(index), actualEvent, item.expect, t)
 		}
 
-		logWatcher.Stop()
+		cancelLogging()
 	}
-	sinkWatcher.Stop()
+	cancelRecording()
 }
 
 func TestMultiSinkCache(t *testing.T) {
@@ -660,11 +684,11 @@ func TestMultiSinkCache(t *testing.T) {
 			UID:       "differentUid",
 		},
 	}
-	testRef, err := ref.GetPartialReference(scheme.Scheme, testPod, "spec.containers[2]")
+	testRef, err := ref.GetPartialReference(newKubeScheme(t), testPod, "spec.containers[2]")
 	if err != nil {
 		t.Fatal(err)
 	}
-	testRef2, err := ref.GetPartialReference(scheme.Scheme, testPod2, "spec.containers[3]")
+	testRef2, err := ref.GetPartialReference(newKubeScheme(t), testPod2, "spec.containers[3]")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -903,9 +927,11 @@ func TestMultiSinkCache(t *testing.T) {
 
 	eventBroadcaster := NewBroadcasterForTests(0)
 	clock := testclocks.NewFakeClock(time.Now())
-	recorder := recorderWithFakeClock(v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
+	recorder := recorderWithFakeClock(t, v1.EventSource{Component: "eventTest"}, eventBroadcaster, clock)
 
-	sinkWatcher := eventBroadcaster.StartRecordingToSink(&testEvents)
+	_, cancelRecording := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartRecordingToSink(ctx, &testEvents)
+	})
 	for index, item := range table {
 		clock.Step(1 * time.Second)
 		recorder.Eventf(item.obj, item.eventtype, item.reason, item.messageFmt, item.elements...)
@@ -921,7 +947,9 @@ func TestMultiSinkCache(t *testing.T) {
 	}
 
 	// Another StartRecordingToSink call should start to record events with new clean cache.
-	sinkWatcher2 := eventBroadcaster.StartRecordingToSink(&testEvents2)
+	_, cancelRecording2 := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
+		return eventBroadcaster.StartRecordingToSink(ctx, &testEvents2)
+	})
 	for index, item := range table {
 		clock.Step(1 * time.Second)
 		recorder.Eventf(item.obj, item.eventtype, item.reason, item.messageFmt, item.elements...)
@@ -936,6 +964,6 @@ func TestMultiSinkCache(t *testing.T) {
 		}
 	}
 
-	sinkWatcher.Stop()
-	sinkWatcher2.Stop()
+	cancelRecording()
+	cancelRecording2()
 }

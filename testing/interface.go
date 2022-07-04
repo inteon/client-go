@@ -18,7 +18,7 @@ package testing
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/watch"
 	restclient "k8s.io/client-go/rest"
 )
 
@@ -51,7 +51,7 @@ type FakeClient interface {
 
 	// InvokesWatch records the provided Action and then invokes the ReactionFunc
 	// that handles the action if one exists.
-	InvokesWatch(action Action) (watch.Interface, error)
+	InvokesWatch(action Action) (watch.Watcher, error)
 
 	// InvokesProxy records the provided Action and then invokes the ReactionFunc
 	// that handles the action if one exists.

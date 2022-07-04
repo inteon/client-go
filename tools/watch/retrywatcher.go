@@ -30,7 +30,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -50,20 +51,17 @@ type resourceVersionGetter interface {
 type RetryWatcher struct {
 	lastResourceVersion string
 	watcherClient       cache.Watcher
-	resultChan          chan watch.Event
-	stopChan            chan struct{}
-	doneChan            chan struct{}
 	minRestartDelay     time.Duration
 }
 
 // NewRetryWatcher creates a new RetryWatcher.
 // It will make sure that watches gets restarted in case of recoverable errors.
 // The initialResourceVersion will be given to watch method when first called.
-func NewRetryWatcher(initialResourceVersion string, watcherClient cache.Watcher) (*RetryWatcher, error) {
+func NewRetryWatcher(initialResourceVersion string, watcherClient cache.Watcher) (watch.Watcher, error) {
 	return newRetryWatcher(initialResourceVersion, watcherClient, 1*time.Second)
 }
 
-func newRetryWatcher(initialResourceVersion string, watcherClient cache.Watcher, minRestartDelay time.Duration) (*RetryWatcher, error) {
+func newRetryWatcher(initialResourceVersion string, watcherClient cache.Watcher, minRestartDelay time.Duration) (watch.Watcher, error) {
 	switch initialResourceVersion {
 	case "", "0":
 		// TODO: revisit this if we ever get WATCH v2 where it means start "now"
@@ -73,37 +71,32 @@ func newRetryWatcher(initialResourceVersion string, watcherClient cache.Watcher,
 		break
 	}
 
-	rw := &RetryWatcher{
+	return &RetryWatcher{
 		lastResourceVersion: initialResourceVersion,
 		watcherClient:       watcherClient,
-		stopChan:            make(chan struct{}),
-		doneChan:            make(chan struct{}),
-		resultChan:          make(chan watch.Event, 0),
 		minRestartDelay:     minRestartDelay,
-	}
-
-	go rw.receive()
-	return rw, nil
+	}, nil
 }
 
-func (rw *RetryWatcher) send(event watch.Event) bool {
+func (rw *RetryWatcher) send(ctx context.Context, outStream chan<- watch.Event, event watch.Event) bool {
 	// Writing to an unbuffered channel is blocking operation
 	// and we need to check if stop wasn't requested while doing so.
 	select {
-	case rw.resultChan <- event:
+	case outStream <- event:
 		return true
-	case <-rw.stopChan:
+	case <-ctx.Done():
 		return false
 	}
 }
 
 // doReceive returns true when it is done, false otherwise.
 // If it is not done the second return value holds the time to wait before calling it again.
-func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
-	watcher, err := rw.watcherClient.Watch(metav1.ListOptions{
+func (rw *RetryWatcher) doReceive(ctx context.Context, outStream chan<- watch.Event) (bool, time.Duration) {
+	watcher, err := rw.watcherClient.Watch(ctx, metav1.ListOptions{
 		ResourceVersion:     rw.lastResourceVersion,
 		AllowWatchBookmarks: true,
 	})
+
 	// We are very unlikely to hit EOF here since we are just establishing the call,
 	// but it may happen that the apiserver is just shutting down (e.g. being restarted)
 	// This is consistent with how it is handled for informers
@@ -138,15 +131,15 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 		return false, 0
 	}
 
-	ch := watcher.ResultChan()
-	defer watcher.Stop()
+	resultCh, ctx, cancel := concurrent.Watch(ctx, watcher)
+	defer cancel()
 
 	for {
 		select {
-		case <-rw.stopChan:
+		case <-ctx.Done():
 			klog.V(4).InfoS("Stopping RetryWatcher.")
 			return true, 0
-		case event, ok := <-ch:
+		case event, ok := <-resultCh:
 			if !ok {
 				klog.V(4).InfoS("Failed to get event! Re-creating the watcher.", "resourceVersion", rw.lastResourceVersion)
 				return false, 0
@@ -157,7 +150,7 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 			case watch.Added, watch.Modified, watch.Deleted, watch.Bookmark:
 				metaObject, ok := event.Object.(resourceVersionGetter)
 				if !ok {
-					_ = rw.send(watch.Event{
+					_ = rw.send(ctx, outStream, watch.Event{
 						Type:   watch.Error,
 						Object: &apierrors.NewInternalError(errors.New("retryWatcher: doesn't support resourceVersion")).ErrStatus,
 					})
@@ -167,7 +160,7 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 
 				resourceVersion := metaObject.GetResourceVersion()
 				if resourceVersion == "" {
-					_ = rw.send(watch.Event{
+					_ = rw.send(ctx, outStream, watch.Event{
 						Type:   watch.Error,
 						Object: &apierrors.NewInternalError(fmt.Errorf("retryWatcher: object %#v doesn't support resourceVersion", event.Object)).ErrStatus,
 					})
@@ -177,7 +170,7 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 
 				// All is fine; send the non-bookmark events and update resource version.
 				if event.Type != watch.Bookmark {
-					ok = rw.send(event)
+					ok = rw.send(ctx, outStream, event)
 					if !ok {
 						return true, 0
 					}
@@ -206,7 +199,7 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 				switch status.Code {
 				case http.StatusGone:
 					// Never retry RV too old errors
-					_ = rw.send(event)
+					_ = rw.send(ctx, outStream, event)
 					return true, 0
 
 				case http.StatusGatewayTimeout, http.StatusInternalServerError:
@@ -228,7 +221,7 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 
 			default:
 				klog.Errorf("Failed to recognize Event type %q", event.Type)
-				_ = rw.send(watch.Event{
+				_ = rw.send(ctx, outStream, watch.Event{
 					Type:   watch.Error,
 					Object: &apierrors.NewInternalError(fmt.Errorf("retryWatcher failed to recognize Event type %q", event.Type)).ErrStatus,
 				})
@@ -240,31 +233,19 @@ func (rw *RetryWatcher) doReceive() (bool, time.Duration) {
 }
 
 // receive reads the result from a watcher, restarting it if necessary.
-func (rw *RetryWatcher) receive() {
-	defer close(rw.doneChan)
-	defer close(rw.resultChan)
+func (rw *RetryWatcher) Listen(ctx context.Context, outStream chan<- watch.Event) error {
+	defer close(outStream)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	klog.V(4).Info("Starting RetryWatcher.")
 	defer klog.V(4).Info("Stopping RetryWatcher.")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-rw.stopChan:
-			cancel()
-			return
-		case <-ctx.Done():
-			return
-		}
-	}()
-
 	// We use non sliding until so we don't introduce delays on happy path when WATCH call
 	// timeouts or gets closed and we need to reestablish it while also avoiding hot loops.
 	wait.NonSlidingUntilWithContext(ctx, func(ctx context.Context) {
-		done, retryAfter := rw.doReceive()
+		done, retryAfter := rw.doReceive(ctx, outStream)
 		if done {
-			cancel()
 			return
 		}
 
@@ -278,19 +259,6 @@ func (rw *RetryWatcher) receive() {
 
 		klog.V(4).Infof("Restarting RetryWatcher at RV=%q", rw.lastResourceVersion)
 	}, rw.minRestartDelay)
-}
 
-// ResultChan implements Interface.
-func (rw *RetryWatcher) ResultChan() <-chan watch.Event {
-	return rw.resultChan
-}
-
-// Stop implements Interface.
-func (rw *RetryWatcher) Stop() {
-	close(rw.stopChan)
-}
-
-// Done allows the caller to be notified when Retry watcher stops.
-func (rw *RetryWatcher) Done() <-chan struct{} {
-	return rw.doneChan
+	return nil
 }

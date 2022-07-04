@@ -18,6 +18,7 @@ package certificate
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -33,10 +34,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	watch "k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1beta1"
+	watch "k8s.io/client-go/pkg/watch"
 	clienttesting "k8s.io/client-go/testing"
 	netutils "k8s.io/utils/net"
 )
@@ -1111,7 +1112,7 @@ func newClientset(opts fakeClient) *fake.Clientset {
 			}
 			return true, nil, fmt.Errorf("watch error")
 		})
-		f.PrependWatchReactor("certificatesigningrequests", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
+		f.PrependWatchReactor("certificatesigningrequests", func(action clienttesting.Action) (handled bool, ret watch.Watcher, err error) {
 			if opts.err != nil {
 				return true, nil, opts.err
 			}
@@ -1150,7 +1151,7 @@ func newClientset(opts fakeClient) *fake.Clientset {
 				return false, nil, nil
 			}
 		})
-		f.PrependWatchReactor("certificatesigningrequests", func(action clienttesting.Action) (handled bool, ret watch.Interface, err error) {
+		f.PrependWatchReactor("certificatesigningrequests", func(action clienttesting.Action) (handled bool, ret watch.Watcher, err error) {
 			switch action.GetResource().Version {
 			case "v1":
 				if opts.noV1 {
@@ -1185,10 +1186,8 @@ type fakeWatch struct {
 	certificatePEM []byte
 }
 
-func (w *fakeWatch) Stop() {
-}
-
-func (w *fakeWatch) ResultChan() <-chan watch.Event {
+func (w *fakeWatch) Listen(ctx context.Context, outStream chan<- watch.Event) error {
+	defer close(outStream)
 	var csr runtime.Object
 
 	switch w.version {
@@ -1237,12 +1236,17 @@ func (w *fakeWatch) ResultChan() <-chan watch.Event {
 		}
 	}
 
-	c := make(chan watch.Event, 1)
-	c <- watch.Event{
+	select {
+	case outStream <- watch.Event{
 		Type:   watch.Added,
 		Object: csr,
+	}:
+	case <-ctx.Done():
 	}
-	return c
+
+	<-ctx.Done()
+
+	return nil
 }
 
 type fakeStore struct {

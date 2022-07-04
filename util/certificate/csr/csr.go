@@ -34,8 +34,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 	watchtools "k8s.io/client-go/tools/watch"
 	certutil "k8s.io/client-go/util/cert"
@@ -174,11 +174,11 @@ func WaitForCertificate(ctx context.Context, client clientset.Interface, reqName
 			// watch v1 objects
 			obj = &certificatesv1.CertificateSigningRequest{}
 			lw = &cache.ListWatch{
-				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+				ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 					options.FieldSelector = fieldSelector
 					return client.CertificatesV1().CertificateSigningRequests().List(ctx, options)
 				},
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 					options.FieldSelector = fieldSelector
 					return client.CertificatesV1().CertificateSigningRequests().Watch(ctx, options)
 				},
@@ -198,11 +198,11 @@ func WaitForCertificate(ctx context.Context, client clientset.Interface, reqName
 			// watch v1beta1 objects
 			obj = &certificatesv1beta1.CertificateSigningRequest{}
 			lw = &cache.ListWatch{
-				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+				ListFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 					options.FieldSelector = fieldSelector
 					return client.CertificatesV1beta1().CertificateSigningRequests().List(ctx, options)
 				},
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 					options.FieldSelector = fieldSelector
 					return client.CertificatesV1beta1().CertificateSigningRequests().Watch(ctx, options)
 				},

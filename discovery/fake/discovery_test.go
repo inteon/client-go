@@ -17,6 +17,7 @@ limitations under the License.
 package fake_test
 
 import (
+	"context"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/version"
@@ -32,11 +33,11 @@ func TestFakingServerVersion(t *testing.T) {
 	}
 
 	testGitCommit := "v1.0.0"
-	fakeDiscovery.FakedServerVersion = &version.Info{
+	fakeDiscovery.FakeRawDiscoveryClient.FakedServerVersion = &version.Info{
 		GitCommit: testGitCommit,
 	}
 
-	sv, err := client.Discovery().ServerVersion()
+	sv, err := client.Discovery().ServerVersion(context.TODO())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

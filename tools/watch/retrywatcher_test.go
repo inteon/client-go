@@ -17,6 +17,7 @@ limitations under the License.
 package watch
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,7 +35,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/pkg/concurrent"
+	"k8s.io/client-go/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -57,9 +59,9 @@ func (o testObject) GetResourceVersion() string       { return o.resourceVersion
 func withCounter(w cache.Watcher) (*uint32, cache.Watcher) {
 	var counter uint32
 	return &counter, &cache.ListWatch{
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+		WatchFunc: func(ctx context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 			atomic.AddUint32(&counter, 1)
-			return w.Watch(options)
+			return w.Watch(ctx, options)
 		},
 	}
 }
@@ -179,15 +181,15 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers if watchClient returns error",
 			initialRV: "1",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func() func(options metav1.ListOptions) (watch.Interface, error) {
+				WatchFunc: func() func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 					firstRun := true
-					return func(options metav1.ListOptions) (watch.Interface, error) {
+					return func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 						if firstRun {
 							firstRun = false
 							return nil, fmt.Errorf("test error")
 						}
 
-						return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+						return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 							makeTestEvent(2),
 						}))), nil
 					}
@@ -202,15 +204,15 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers if watchClient returns nil watcher",
 			initialRV: "1",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func() func(options metav1.ListOptions) (watch.Interface, error) {
+				WatchFunc: func() func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 					firstRun := true
-					return func(options metav1.ListOptions) (watch.Interface, error) {
+					return func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
 						if firstRun {
 							firstRun = false
 							return nil, nil
 						}
 
-						return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+						return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 							makeTestEvent(2),
 						}))), nil
 					}
@@ -225,8 +227,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "works with empty initialRV",
 			initialRV: "1",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(2),
 					}))), nil
 				},
@@ -240,8 +242,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "works with initialRV set, skipping the preceding items but reading those directly following",
 			initialRV: "1",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(1),
 						makeTestEvent(2),
 					}))), nil
@@ -256,8 +258,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "works with initialRV set, skipping the preceding items with none following",
 			initialRV: "3",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(2),
 					}))), nil
 				},
@@ -269,8 +271,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "fails on Gone (RV too old error)",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(5),
 						makeTestEvent(6),
 						{Type: watch.Error, Object: &apierrors.NewGone("").ErrStatus},
@@ -292,8 +294,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers from timeout error",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(6),
 						{
 							Type:   watch.Error,
@@ -313,8 +315,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers from internal server error",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(6),
 						{
 							Type:   watch.Error,
@@ -334,8 +336,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers from unexpected error code",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(6),
 						{
 							Type: watch.Error,
@@ -357,8 +359,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "recovers from unexpected error type",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(6),
 						{
 							Type:   watch.Error,
@@ -378,8 +380,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 1 closed watch and reads 1 item",
 			initialRV: "5",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(6),
 					})))), nil
 				},
@@ -393,8 +395,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 2 closed watches and reads 2 items",
 			initialRV: "4",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(5),
 						makeTestEvent(6),
 					})))), nil
@@ -410,8 +412,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 2 closed watches and reads 2 items for nonconsecutive RVs",
 			initialRV: "4",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(5),
 						makeTestEvent(7),
 					})))), nil
@@ -427,8 +429,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 2 closed watches and reads 2 items for nonconsecutive RVs starting at much lower RV",
 			initialRV: "2",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(5),
 						makeTestEvent(7),
 					})))), nil
@@ -444,8 +446,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 4 closed watches and reads 4 items for nonconsecutive, spread RVs",
 			initialRV: "2",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(5),
 						makeTestEvent(6),
 						makeTestEvent(7),
@@ -465,8 +467,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 4 closed watches and reads 4 items for nonconsecutive, spread RVs and skips those with lower or equal RV",
 			initialRV: "2",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(1, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(1),
 						makeTestEvent(2),
 						makeTestEvent(5),
@@ -488,8 +490,8 @@ func TestRetryWatcher(t *testing.T) {
 			name:      "survives 2 closed watches and reads 2+2+1 items skipping those with equal RV",
 			initialRV: "1",
 			watchClient: &cache.ListWatch{
-				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-					return watch.NewProxyWatcher(closeAfterN(2, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
+				WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+					return watch.NewBoundedWatcherFromChannel(closeAfterN(2, arrayToChannel(fromRV(options.ResourceVersion, []watch.Event{
 						makeTestEvent(1),
 						makeTestEvent(2),
 						makeTestEvent(5),
@@ -520,15 +522,13 @@ func TestRetryWatcher(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create a RetryWatcher: %v", err)
 			}
-			defer func() {
-				watcher.Stop()
-				t.Log("Waiting on RetryWatcher to stop...")
-				<-watcher.Done()
-			}()
+
+			resultChan, _, cancel := concurrent.Watch(context.Background(), watcher)
+			defer cancel()
 
 			var got []watch.Event
 			for i := 0; i < len(tc.expected); i++ {
-				event, ok := <-watcher.ResultChan()
+				event, ok := <-resultChan
 				if !ok {
 					t.Error(spew.Errorf("expected event %#+v, but channel is closed"), tc.expected[i])
 					break
@@ -542,7 +542,7 @@ func TestRetryWatcher(t *testing.T) {
 			// but have to tolerate some delay. Given this is best effort detection we can use short duration.
 			// It also makes sure that for 0 events the watchFunc has time to be called.
 			select {
-			case event, ok := <-watcher.ResultChan():
+			case event, ok := <-resultChan:
 				if ok {
 					t.Error(spew.Errorf("Unexpected event received after reading all the expected ones: %#+v", event))
 				}
@@ -572,8 +572,8 @@ func TestRetryWatcher(t *testing.T) {
 
 func TestRetryWatcherToFinishWithUnreadEvents(t *testing.T) {
 	watcher, err := NewRetryWatcher("1", &cache.ListWatch{
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			return watch.NewProxyWatcher(arrayToChannel([]watch.Event{
+		WatchFunc: func(_ context.Context, options metav1.ListOptions) (watch.Watcher, error) {
+			return watch.NewBoundedWatcherFromChannel(arrayToChannel([]watch.Event{
 				makeTestEvent(2),
 			})), nil
 		},
@@ -582,21 +582,15 @@ func TestRetryWatcherToFinishWithUnreadEvents(t *testing.T) {
 		t.Fatalf("failed to create a RetryWatcher: %v", err)
 	}
 
+	resultChan, _, cancel := concurrent.Watch(context.Background(), watcher)
+
 	// Give the watcher a chance to get to sending events (blocking)
 	time.Sleep(10 * time.Millisecond)
 
-	watcher.Stop()
-
-	maxTime := time.Second
-	select {
-	case <-watcher.Done():
-		break
-	case <-time.After(maxTime):
-		t.Errorf("The watcher failed to be closed in %s", maxTime)
-	}
+	cancel()
 
 	// RetryWatcher result channel should be closed
-	_, ok := <-watcher.ResultChan()
+	_, ok := <-resultChan
 	if ok {
 		t.Error("ResultChan is not closed")
 	}
