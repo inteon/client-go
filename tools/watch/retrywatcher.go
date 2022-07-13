@@ -246,6 +246,7 @@ func (rw *RetryWatcher) Listen(ctx context.Context, outStream chan<- watch.Event
 	wait.NonSlidingUntilWithContext(ctx, func(ctx context.Context) {
 		done, retryAfter := rw.doReceive(ctx, outStream)
 		if done {
+			cancel()
 			return
 		}
 

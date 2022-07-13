@@ -53,7 +53,7 @@ func newNegotiator(t testing.TB) rest.SerializerNegotiator {
 
 func discoveryClient(t testing.TB, config *restclient.Config) *discovery.DiscoveryClient {
 	config.Negotiator = newNegotiator(t)
-	restClient, err := restclient.RESTClientFor(config)
+	restClient, err := config.Build()
 	if err != nil {
 		t.Fatal(err)
 	}

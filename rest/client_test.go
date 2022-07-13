@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	utiltesting "k8s.io/client-go/util/testing"
 
+	http_client "github.com/go418/http-client"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -329,13 +330,13 @@ func TestHTTPProxy(t *testing.T) {
 		t.Fatalf("Failed to parse test proxy server url: %v", err)
 	}
 
-	c, err := RESTClientFor(&Config{
+	c, err := Config{
 		Host:       testServer.URL,
 		Negotiator: newNegotiator(t),
-		Proxy:      http.ProxyURL(u),
-		Username:   "user",
-		Password:   "pass",
-	})
+	}.Build(
+		http_client.BasicAuth("user", "pass"),
+		http_client.Proxy(http.ProxyURL(u)),
+	)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -403,11 +404,11 @@ func testServerEnv(t *testing.T, statusCode int) (*httptest.Server, *utiltesting
 }
 
 func restClient(t testing.TB, testServer *httptest.Server) (*RESTClient, error) {
-	c, err := RESTClientFor(&Config{
+	c, err := Config{
 		Host:       testServer.URL,
 		Negotiator: newNegotiator(t),
-		Username:   "user",
-		Password:   "pass",
-	})
+	}.Build(
+		http_client.BasicAuth("user", "pass"),
+	)
 	return c, err
 }

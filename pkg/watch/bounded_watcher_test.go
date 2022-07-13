@@ -2,12 +2,12 @@ package watch_test
 
 import (
 	"context"
-	goruntime "runtime"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/pkg/concurrent"
 	"k8s.io/client-go/pkg/watch"
 )
 
@@ -40,18 +40,10 @@ func TestBoundedWatcherExit(t *testing.T) {
 
 			test.write(e)
 
-			ctx, cancel := context.WithCancel(context.Background())
-			exited := make(chan struct{})
-			eventStream := make(chan watch.Event)
-			go func() {
-				e.Listen(ctx, eventStream)
-				close(exited)
-			}()
+			eventStream, _, complete := concurrent.Watch(context.Background(), e)
 
 			<-eventStream
-			cancel()
-			goruntime.Gosched()
-			<-exited
+			complete()
 		})
 	}
 }

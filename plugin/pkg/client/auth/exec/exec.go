@@ -45,7 +45,6 @@ import (
 	clientauthenticationv1beta1 "k8s.io/client-go/pkg/apis/clientauthentication/v1beta1"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/metrics"
-	"k8s.io/client-go/transport"
 	"k8s.io/client-go/util/connrotation"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -282,6 +281,7 @@ type credentials struct {
 
 // UpdateTransportConfig updates the transport.Config to use credentials
 // returned by the plugin.
+/*
 func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	// If a bearer token is present in the request - avoid the GetCert callback when
 	// setting up the transport, as that triggers the exec action if the server is
@@ -314,6 +314,7 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 
 	return nil
 }
+*/
 
 var _ utilnet.RoundTripperWrapper = &roundTripper{}
 

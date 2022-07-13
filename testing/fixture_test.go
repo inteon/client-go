@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/pkg/concurrent"
 	"k8s.io/client-go/pkg/watch"
@@ -63,8 +62,7 @@ func TestWatchCallNonNamespace(t *testing.T) {
 	}
 	ns := accessor.GetNamespace()
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	watcher, err := o.Watch(testResource, ns)
 	if err != nil {
 		t.Fatalf("test resource watch failed in %s: %v ", ns, err)
@@ -90,8 +88,7 @@ func TestWatchCallAllNamespace(t *testing.T) {
 	}
 	ns := accessor.GetNamespace()
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	w, err := o.Watch(testResource, "test_namespace")
 	if err != nil {
 		t.Fatalf("test resource watch failed in test_namespace: %v", err)
@@ -185,10 +182,8 @@ func TestWatchCallMultipleInvocation(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
 	testResource := schema.GroupVersionResource{Group: "", Version: "test_version", Resource: "test_kind"}
-
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	watchNamespaces := []string{
 		"",
 		"",
@@ -250,8 +245,7 @@ func TestWatchAddAfterStop(t *testing.T) {
 
 	ns := accessor.GetNamespace()
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	watcher, err := o.Watch(testResource, ns)
 	if err != nil {
 		t.Errorf("watch creation failed: %v", err)
@@ -277,8 +271,7 @@ func TestPatchWithMissingObject(t *testing.T) {
 	nodesResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "nodes"}
 
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	reaction := ObjectReaction(o)
 	action := NewRootPatchSubresourceAction(nodesResource, "node-1", types.StrategicMergePatchType, []byte(`{}`))
 	handled, node, err := reaction(action)
@@ -289,7 +282,6 @@ func TestPatchWithMissingObject(t *testing.T) {
 
 func TestGetWithExactMatch(t *testing.T) {
 	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
 
 	constructObject := func(s schema.GroupVersionResource, name, namespace string) (*unstructured.Unstructured, schema.GroupVersionResource) {
 		obj := getArbitraryResource(s, name, namespace)
@@ -301,7 +293,7 @@ func TestGetWithExactMatch(t *testing.T) {
 
 	var err error
 	// Object with empty namespace
-	o := NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o := NewObjectTracker(scheme)
 	nodeResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "node"}
 	node, gvr := constructObject(nodeResource, "node", "")
 
@@ -318,7 +310,7 @@ func TestGetWithExactMatch(t *testing.T) {
 	assert.EqualError(t, err, errNotFound.Error())
 
 	// Object with non-empty namespace
-	o = NewObjectTracker(scheme, codecs.UniversalDecoder())
+	o = NewObjectTracker(scheme)
 	podResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pod"}
 	pod, gvr := constructObject(podResource, "pod", "default")
 	assert.Nil(t, o.Add(pod))

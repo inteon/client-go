@@ -21,6 +21,13 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,12 +36,6 @@ import (
 	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
-	"testing"
-	"time"
 )
 
 type AttachFunc func(in io.Reader, out, err io.WriteCloser, tty bool, resize <-chan TerminalSize) error
@@ -173,7 +174,7 @@ func newTestHTTPServer(f AttachFunc, options *StreamOptions) *httptest.Server {
 
 func attach2Server(rawURL string, options StreamOptions) error {
 	uri, _ := url.Parse(rawURL)
-	exec, err := NewSPDYExecutor(&rest.Config{Host: uri.Host}, "POST", uri)
+	exec, err := NewSPDYExecutor(&rest.Config{Host: uri.Host}.Build(), "POST", uri)
 	if err != nil {
 		return err
 	}

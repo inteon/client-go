@@ -17,12 +17,26 @@ limitations under the License.
 package rest
 
 import (
-	"net/http"
+	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	gruntime "runtime"
+	"strconv"
 	"strings"
+	"time"
 
+	http_client "github.com/go418/http-client"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/pkg/version"
 	"k8s.io/client-go/util/flowcontrol"
+)
+
+const (
+	// Environment variables: Note that the duration should be long enough that the backoff
+	// persists for some reasonable time (i.e. 120 seconds).  The typical base might be "1".
+	envBackoffBase     = "KUBE_CLIENT_BACKOFF_BASE"
+	envBackoffDuration = "KUBE_CLIENT_BACKOFF_DURATION"
 )
 
 // Interface captures the set of operations for generically interacting with Kubernetes REST apis.
@@ -33,6 +47,177 @@ type Interface interface {
 	Patch(pt types.PatchType) *Request
 	Get() *Request
 	Delete() *Request
+}
+
+type Config struct {
+	Host       string
+	Negotiator SerializerNegotiator
+
+	// Rate limiter for limiting connections to the master from this client. If present overwrites QPS/Burst
+	RateLimiter flowcontrol.RateLimiter
+
+	// QPS indicates the maximum QPS to the master from this client.
+	// If it's zero, the created RESTClient will use DefaultQPS: 5
+	QPS float32
+
+	// Maximum burst for throttle.
+	// If it's zero, the created RESTClient will use DefaultBurst: 10.
+	Burst int
+
+	// WarningHandler handles warnings in server responses.
+	// If not set, the default warning handler is used.
+	// See documentation for SetDefaultWarningHandler() for details.
+	WarningHandler WarningHandler
+}
+
+const (
+	DefaultQPS   float32 = 5.0
+	DefaultBurst int     = 10
+)
+
+// TODO: move the default to secure when the apiserver supports TLS by default
+// config.Insecure is taken to mean "I want HTTPS but don't bother checking the certs against a CA."
+// hasCA := len(config.CAFile) != 0 || len(config.CAData) != 0
+// hasCert := len(config.CertFile) != 0 || len(config.CertData) != 0
+// defaultTLS := hasCA || hasCert || config.Insecure
+
+func (o Config) Build(options ...http_client.Option) (*RESTClient, error) {
+	options = append(options, http_client.UserAgent(DefaultKubernetesUserAgent()))
+	client, err := http_client.NewClient(options...)
+	if err != nil {
+		return nil, err
+	}
+	if o.Host == "" {
+		o.Host = "localhost"
+	}
+	base, err := DefaultServerURL(o.Host, true)
+	if err != nil {
+		return nil, err
+	}
+
+	rateLimiter := o.RateLimiter
+	if rateLimiter == nil {
+		qps := o.QPS
+		if o.QPS == 0.0 {
+			qps = DefaultQPS
+		}
+		burst := o.Burst
+		if o.Burst == 0 {
+			burst = DefaultBurst
+		}
+		if qps > 0 {
+			rateLimiter = flowcontrol.NewTokenBucketRateLimiter(qps, burst)
+		}
+	}
+
+	return NewRESTClient(base, o.Negotiator, readExpBackoffConfig, nil, o.WarningHandler, client)
+}
+
+func (o Config) BuildManual(options ...http_client.Option) (*RESTClient, error) {
+	client, err := http_client.NewClientManual(options...)
+	if err != nil {
+		return nil, err
+	}
+	if o.Host == "" {
+		o.Host = "localhost"
+	}
+	base, err := DefaultServerURL(o.Host, true)
+	if err != nil {
+		return nil, err
+	}
+
+	rateLimiter := o.RateLimiter
+	if rateLimiter == nil {
+		qps := o.QPS
+		if o.QPS == 0.0 {
+			qps = DefaultQPS
+		}
+		burst := o.Burst
+		if o.Burst == 0 {
+			burst = DefaultBurst
+		}
+		if qps > 0 {
+			rateLimiter = flowcontrol.NewTokenBucketRateLimiter(qps, burst)
+		}
+	}
+
+	return NewRESTClient(base, o.Negotiator, readExpBackoffConfig, rateLimiter, o.WarningHandler, client)
+}
+
+// readExpBackoffConfig handles the internal logic of determining what the
+// backoff policy is.  By default if no information is available, NoBackoff.
+// TODO Generalize this see #17727 .
+func readExpBackoffConfig() BackoffManager {
+	backoffBase := os.Getenv(envBackoffBase)
+	backoffDuration := os.Getenv(envBackoffDuration)
+
+	backoffBaseInt, errBase := strconv.ParseInt(backoffBase, 10, 64)
+	backoffDurationInt, errDuration := strconv.ParseInt(backoffDuration, 10, 64)
+	if errBase != nil || errDuration != nil {
+		return &NoBackoff{}
+	}
+	return &URLBackoff{
+		Backoff: flowcontrol.NewBackOff(
+			time.Duration(backoffBaseInt)*time.Second,
+			time.Duration(backoffDurationInt)*time.Second)}
+}
+
+// adjustCommit returns sufficient significant figures of the commit's git hash.
+func adjustCommit(c string) string {
+	if len(c) == 0 {
+		return "unknown"
+	}
+	if len(c) > 7 {
+		return c[:7]
+	}
+	return c
+}
+
+// adjustVersion strips "alpha", "beta", etc. from version in form
+// major.minor.patch-[alpha|beta|etc].
+func adjustVersion(v string) string {
+	if len(v) == 0 {
+		return "unknown"
+	}
+	seg := strings.SplitN(v, "-", 2)
+	return seg[0]
+}
+
+// adjustCommand returns the last component of the
+// OS-specific command path for use in User-Agent.
+func adjustCommand(p string) string {
+	// Unlikely, but better than returning "".
+	if len(p) == 0 {
+		return "unknown"
+	}
+	return filepath.Base(p)
+}
+
+// buildUserAgent builds a User-Agent string from given args.
+func buildUserAgent(command, version, os, arch, commit string) string {
+	return fmt.Sprintf(
+		"%s/%s (%s/%s) kubernetes/%s", command, version, os, arch, commit)
+}
+
+// DefaultKubernetesUserAgent returns a User-Agent string built from static global vars.
+func DefaultKubernetesUserAgent() string {
+	return buildUserAgent(
+		adjustCommand(os.Args[0]),
+		adjustVersion(version.Get().GitVersion),
+		gruntime.GOOS,
+		gruntime.GOARCH,
+		adjustCommit(version.Get().GitCommit))
+}
+
+func KubernetesUserAgent(userAgent string) http_client.Option {
+	return http_client.UserAgent(DefaultKubernetesUserAgent() + "/" + userAgent)
+}
+
+func EnableOption(enable bool, option http_client.Option) http_client.Option {
+	if !enable {
+		return func(state *http_client.OptionState) error { return nil }
+	}
+	return option
 }
 
 // RESTClient imposes common Kubernetes API conventions on a set of resource paths.
@@ -62,7 +247,7 @@ type RESTClient struct {
 	warningHandler WarningHandler
 
 	// Set specific behavior of the client.  If not set http.DefaultClient will be used.
-	Client *http.Client
+	Client http_client.Client
 }
 
 // NewRESTClient creates a new RESTClient. This client performs generic REST functions
@@ -73,7 +258,7 @@ func NewRESTClient(
 	createBackoffMgr func() BackoffManager,
 	rateLimiter flowcontrol.RateLimiter,
 	warningHandler WarningHandler,
-	client *http.Client,
+	client http_client.Client,
 ) (*RESTClient, error) {
 	base := *baseURL
 	if !strings.HasSuffix(base.Path, "/") {

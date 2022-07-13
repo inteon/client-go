@@ -143,9 +143,9 @@ func newOIDCAuthProvider(clusterAddress string, cfg map[string]string, persister
 			CAFile: cfg[cfgCertificateAuthority],
 			CAData: certAuthData,
 		},
-	}
+	}.Build()
 
-	trans, err := restclient.TransportFor(&clientConfig)
+	trans, err := restclient.TransportFor(clientConfig)
 	if err != nil {
 		return nil, err
 	}

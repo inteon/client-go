@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	http_client "github.com/go418/http-client"
 	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -46,7 +47,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/pkg/concurrent"
 	"k8s.io/client-go/pkg/watch"
 	restclientwatch "k8s.io/client-go/rest/watch"
@@ -1036,10 +1036,7 @@ func TestRequestWatch(t *testing.T) {
 				return
 			}
 
-			outStream := make(chan watch.Event)
-			_, cancelListen := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
-				return watcher.Listen(ctx, outStream)
-			})
+			outStream, ctx, cancelListen := concurrent.Watch(ctx, watcher)
 			defer cancelListen()
 
 			if testCase.Empty {
@@ -1953,11 +1950,8 @@ func TestWatch(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			outStream := make(chan watch.Event)
-			_, cancel := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
-				return watching.Listen(ctx, outStream)
-			})
-			defer cancel()
+			outStream, _, cancelListen := concurrent.Watch(context.Background(), watching)
+			defer cancelListen()
 
 			for _, item := range table {
 				got, ok := <-outStream
@@ -2021,11 +2015,8 @@ func TestWatchNonDefaultContentType(t *testing.T) {
 		t.Fatalf("Unexpected error")
 	}
 
-	outStream := make(chan watch.Event)
-	_, cancel := concurrent.CompleteWithError(context.Background(), func(ctx context.Context) error {
-		return watching.Listen(ctx, outStream)
-	})
-	defer cancel()
+	outStream, _, cancelListen := concurrent.Watch(context.Background(), watching)
+	defer cancelListen()
 
 	for _, item := range table {
 		got, ok := <-outStream
@@ -2634,11 +2625,8 @@ func TestRequestWatchWithRetry(t *testing.T) {
 			// - then close the io.Reader
 			// since we assert on the number of times 'Close' has been called on the
 			// body of the response object, we need to wait here to avoid race condition.
-			outStream := make(chan watch.Event)
-			_, cancel := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
-				return w.Listen(ctx, outStream)
-			})
-			defer cancel()
+			outStream, _, complete := concurrent.Watch(ctx, w)
+			defer complete()
 			<-outStream
 		}
 	})
@@ -2667,11 +2655,8 @@ func TestRequestWatchRetryWithRateLimiterBackoffAndMetrics(t *testing.T) {
 			// - then close the io.Reader
 			// since we assert on the number of times 'Close' has been called on the
 			// body of the response object, we need to wait here to avoid race condition.
-			outStream := make(chan watch.Event)
-			_, cancel := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
-				return w.Listen(ctx, outStream)
-			})
-			defer cancel()
+			outStream, _, complete := concurrent.Watch(ctx, w)
+			defer complete()
 			<-outStream
 		}
 	})
@@ -2700,11 +2685,8 @@ func TestRequestWatchWithRetryInvokeOrder(t *testing.T) {
 			// - then close the io.Reader
 			// since we assert on the number of times 'Close' has been called on the
 			// body of the response object, we need to wait here to avoid race condition.
-			outStream := make(chan watch.Event)
-			_, cancel := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
-				return w.Listen(ctx, outStream)
-			})
-			defer cancel()
+			outStream, _, complete := concurrent.Watch(ctx, w)
+			defer complete()
 			<-outStream
 		}
 	})
@@ -2720,11 +2702,8 @@ func TestRequestWatchWithWrapPreviousError(t *testing.T) {
 			// - then close the io.Reader
 			// since we assert on the number of times 'Close' has been called on the
 			// body of the response object, we need to wait here to avoid race condition.
-			outStream := make(chan watch.Event)
-			_, cancel := concurrent.CompleteWithError(ctx, func(ctx context.Context) error {
-				return w.Listen(ctx, outStream)
-			})
-			defer cancel()
+			outStream, _, complete := concurrent.Watch(ctx, w)
+			defer complete()
 			<-outStream
 		}
 		return err
@@ -3594,17 +3573,16 @@ func TestHTTP1DoNotReuseRequestAfterTimeout(t *testing.T) {
 				t.Fatalf("failed to assert *http.Transport")
 			}
 
-			config := &Config{
-				Host:      ts.URL,
-				Transport: utilnet.SetTransportDefaults(transport),
-				Timeout:   1 * time.Second,
-				// These fields are required to create a REST client.
+			c, err := Config{
+				Host:       ts.URL,
 				Negotiator: newNegotiator(t),
-			}
-			if !tt.enableHTTP2 {
-				config.TLSClientConfig.NextProtos = []string{"http/1.1"}
-			}
-			c, err := RESTClientFor(config)
+			}.BuildManual(
+				http_client.ManualCloneRequest(),
+				EnableOption(!tt.enableHTTP2, http_client.DisableHttp2()),
+				http_client.Timeout(1*time.Second),
+				http_client.ManualDefaultClient(),
+				http_client.ManualTransport(transport),
+			)
 			if err != nil {
 				t.Fatalf("failed to create REST client: %v", err)
 			}

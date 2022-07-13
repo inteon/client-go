@@ -45,13 +45,13 @@ func TestConfigToExecCluster(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		in              Config
+		in              *Config
 		wantOut         clientauthenticationapi.Cluster
 		wantErrorPrefix string
 	}{
 		{
 			name: "CA data from memory",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 					Config: &runtime.Unknown{
@@ -65,7 +65,7 @@ func TestConfigToExecCluster(t *testing.T) {
 					CAData:     []byte("some-ca-data"),
 				},
 				Proxy: proxy,
-			},
+			}.Build(),
 			wantOut: clientauthenticationapi.Cluster{
 				Server:                   "some-host",
 				TLSServerName:            "some-server-name",
@@ -79,7 +79,7 @@ func TestConfigToExecCluster(t *testing.T) {
 		},
 		{
 			name: "CA data from file",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 					Config: &runtime.Unknown{
@@ -93,7 +93,7 @@ func TestConfigToExecCluster(t *testing.T) {
 					CAFile:     "testdata/ca.pem",
 				},
 				Proxy: proxy,
-			},
+			}.Build(),
 			wantOut: clientauthenticationapi.Cluster{
 				Server:                   "some-host",
 				TLSServerName:            "some-server-name",
@@ -107,19 +107,19 @@ func TestConfigToExecCluster(t *testing.T) {
 		},
 		{
 			name: "no CA data",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 				},
 				TLSClientConfig: TLSClientConfig{
 					CAFile: "this-file-does-not-exist",
 				},
-			},
+			}.Build(),
 			wantErrorPrefix: "failed to load CA bundle for execProvider: ",
 		},
 		{
 			name: "nil proxy",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 					Config: &runtime.Unknown{
@@ -132,7 +132,7 @@ func TestConfigToExecCluster(t *testing.T) {
 					Insecure:   true,
 					CAFile:     "testdata/ca.pem",
 				},
-			},
+			}.Build(),
 			wantOut: clientauthenticationapi.Cluster{
 				Server:                   "some-host",
 				TLSServerName:            "some-server-name",
@@ -145,19 +145,19 @@ func TestConfigToExecCluster(t *testing.T) {
 		},
 		{
 			name: "bad proxy",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 				},
 				Proxy: func(_ *http.Request) (*url.URL, error) {
 					return nil, errors.New("some proxy error")
 				},
-			},
+			}.Build(),
 			wantErrorPrefix: "failed to get proxy URL for execProvider: some proxy error",
 		},
 		{
 			name: "proxy returns nil",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 				},
@@ -170,7 +170,7 @@ func TestConfigToExecCluster(t *testing.T) {
 					Insecure:   true,
 					CAFile:     "testdata/ca.pem",
 				},
-			},
+			}.Build(),
 			wantOut: clientauthenticationapi.Cluster{
 				Server:                   "some-host",
 				TLSServerName:            "some-server-name",
@@ -180,7 +180,7 @@ func TestConfigToExecCluster(t *testing.T) {
 		},
 		{
 			name: "invalid config host",
-			in: Config{
+			in: ConfigConfig{
 				ExecProvider: &clientcmdapi.ExecConfig{
 					ProvideClusterInfo: true,
 				},
@@ -188,14 +188,14 @@ func TestConfigToExecCluster(t *testing.T) {
 					return nil, nil
 				},
 				Host: "invalid-config-host\n",
-			},
+			}.Build(),
 			wantErrorPrefix: "failed to create proxy URL request for execProvider: ",
 		},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			out, err := ConfigToExecCluster(&test.in)
+			out, err := ConfigToExecCluster(test.in)
 			if test.wantErrorPrefix != "" {
 				if err == nil {
 					t.Error("wanted error")

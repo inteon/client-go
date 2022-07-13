@@ -17,6 +17,7 @@ limitations under the License.
 package testing
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"sort"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/pkg/watch"
+	"k8s.io/client-go/rest"
 	restclient "k8s.io/client-go/rest"
 )
 
@@ -72,6 +74,7 @@ type ObjectTracker interface {
 type ObjectScheme interface {
 	runtime.ObjectCreater
 	runtime.ObjectTyper
+	runtime.ObjectDefaulter
 }
 
 // ObjectReaction returns a ReactionFunc that applies core.Action to
@@ -196,10 +199,10 @@ func ObjectReaction(tracker ObjectTracker) ReactionFunc {
 }
 
 type tracker struct {
-	scheme  ObjectScheme
-	decoder runtime.Decoder
-	lock    sync.RWMutex
-	objects map[schema.GroupVersionResource]map[types.NamespacedName]runtime.Object
+	scheme     ObjectScheme
+	negotiator rest.SerializerNegotiator
+	lock       sync.RWMutex
+	objects    map[schema.GroupVersionResource]map[types.NamespacedName]runtime.Object
 	// The value type of watchers is a map of which the key is either a namespace or
 	// all/non namespace aka "" and its value is list of fake watchers.
 	// Manipulations on resources will broadcast the notification events into the
@@ -212,12 +215,12 @@ var _ ObjectTracker = &tracker{}
 
 // NewObjectTracker returns an ObjectTracker that can be used to keep track
 // of objects for the fake clientset. Mostly useful for unit tests.
-func NewObjectTracker(scheme ObjectScheme, decoder runtime.Decoder) ObjectTracker {
+func NewObjectTracker(scheme *runtime.Scheme) ObjectTracker {
 	return &tracker{
-		scheme:   scheme,
-		decoder:  decoder,
-		objects:  make(map[schema.GroupVersionResource]map[types.NamespacedName]runtime.Object),
-		watchers: make(map[schema.GroupVersionResource]map[string][]*watch.BoundedWatcher),
+		scheme:     scheme,
+		negotiator: rest.NewSerializerNegotiator(scheme, false),
+		objects:    make(map[schema.GroupVersionResource]map[types.NamespacedName]runtime.Object),
+		watchers:   make(map[schema.GroupVersionResource]map[string][]*watch.BoundedWatcher),
 	}
 }
 
@@ -237,6 +240,7 @@ func (t *tracker) List(gvr schema.GroupVersionResource, gvk schema.GroupVersionK
 	if err != nil {
 		return nil, err
 	}
+	list.GetObjectKind().SetGroupVersionKind(listGVK)
 
 	if !meta.IsListType(list) {
 		return nil, fmt.Errorf("%q is not a list type", listGVK.Kind)
@@ -306,10 +310,31 @@ func (t *tracker) Add(obj runtime.Object) error {
 	if meta.IsListType(obj) {
 		return t.addList(obj, false)
 	}
+
+	// round-trip to make sure all TypeMeta etc. are filled out
+	mediaType := t.negotiator.ContentType(obj.GetObjectKind().GroupVersionKind())
+	encoder, err := t.negotiator.Encoder(mediaType, nil)
+	if err != nil {
+		return err
+	}
+	decoder, err := t.negotiator.Decoder(mediaType, nil)
+	if err != nil {
+		return err
+	}
+	buffer := bytes.NewBuffer(nil)
+	if err := encoder.Encode(obj, buffer); err != nil {
+		return err
+	}
+	obj, _, err = decoder.Decode(buffer.Bytes(), nil, obj)
+	if err != nil {
+		return err
+	}
+
 	objMeta, err := meta.Accessor(obj)
 	if err != nil {
 		return err
 	}
+
 	gvks, _, err := t.scheme.ObjectKinds(obj)
 	if err != nil {
 		return err
@@ -322,6 +347,7 @@ func (t *tracker) Add(obj runtime.Object) error {
 	if len(gvks) == 0 {
 		return fmt.Errorf("no registered kinds for %v", obj)
 	}
+
 	for _, gvk := range gvks {
 		// NOTE: UnsafeGuessKindToResource is a heuristic and default match. The
 		// actual registration in apiserver can specify arbitrary route for a
@@ -429,7 +455,13 @@ func (t *tracker) addList(obj runtime.Object, replaceExisting bool) error {
 	if err != nil {
 		return err
 	}
-	errs := runtime.DecodeList(list, t.decoder)
+
+	decoder, err := t.negotiator.Decoder(string(rest.JsonMediaType), nil)
+	if err != nil {
+		return err
+	}
+
+	errs := runtime.DecodeList(list, decoder)
 	if len(errs) > 0 {
 		return errs[0]
 	}

@@ -25,18 +25,14 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	manualfake "k8s.io/client-go/rest/fake"
 )
 
 func TestListTimeout(t *testing.T) {
 	fakeClient := &manualfake.RESTClient{
-		GroupVersion:         appsv1.SchemeGroupVersion,
-		NegotiatedSerializer: scheme.Codecs,
 		Client: manualfake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 			if req.URL.Query().Get("timeout") != "21s" {
 				t.Fatal(spew.Sdump(req.URL.Query()))
@@ -44,14 +40,11 @@ func TestListTimeout(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusNotFound, Body: ioutil.NopCloser(&bytes.Buffer{})}, nil
 		}),
 	}
-	clientConfig := &rest.Config{
-		APIPath: "/apis",
-		ContentConfig: rest.ContentConfig{
-			NegotiatedSerializer: scheme.Codecs,
-			GroupVersion:         &appsv1.SchemeGroupVersion,
-		},
+
+	restClient, err := rest.Config{}.Build()
+	if err != nil {
+		t.Fatal(err)
 	}
-	restClient, _ := rest.RESTClientFor(clientConfig)
 	restClient.Client = fakeClient.Client
 	realClient := kubernetes.New(restClient)
 

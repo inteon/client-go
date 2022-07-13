@@ -136,7 +136,7 @@ func NewRequest(c *RESTClient) *Request {
 
 	var timeout time.Duration
 	if c.Client != nil {
-		timeout = c.Client.Timeout
+		timeout = c.Client.(*http.Client).Timeout
 	}
 
 	r := &Request{

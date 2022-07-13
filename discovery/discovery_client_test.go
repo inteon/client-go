@@ -38,7 +38,6 @@ import (
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	restclient "k8s.io/client-go/rest"
 	testutil "k8s.io/client-go/util/testing"
 	"k8s.io/kube-openapi/pkg/util/proto"
 )
@@ -55,9 +54,9 @@ func newNegotiator(t testing.TB) rest.SerializerNegotiator {
 	return rest.NewSerializerNegotiator(newKubeScheme(t), false)
 }
 
-func discoveryClient(t testing.TB, config *restclient.Config) *DiscoveryClient {
+func discoveryClient(t testing.TB, config *rest.Config) *DiscoveryClient {
 	config.Negotiator = newNegotiator(t)
-	restClient, err := restclient.RESTClientFor(config)
+	restClient, err := config.Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +81,7 @@ func TestGetServerVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 
 	got, err := client.ServerVersion(context.TODO())
 	if err != nil {
@@ -128,7 +127,7 @@ func TestGetServerGroupsWithV1Server(t *testing.T) {
 		w.Write(output)
 	}))
 	defer server.Close()
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 	// ServerGroups should not return an error even if server returns error at /api and /apis
 	groupVersions, err := client.ApiGroupVersions(context.TODO())
 	if err != nil {
@@ -145,7 +144,7 @@ func TestGetServerGroupsWithBrokenServer(t *testing.T) {
 			w.WriteHeader(statusCode)
 		}))
 		defer server.Close()
-		client := discoveryClient(t, &restclient.Config{Host: server.URL})
+		client := discoveryClient(t, &rest.Config{Host: server.URL})
 		// ServerGroups should not return an error even if server returns Not Found or Forbidden error at all end points
 		groupVersions, err := client.ApiGroupVersions(context.TODO())
 		if err != nil {
@@ -181,7 +180,7 @@ func TestGetServerResourcesWithV1Server(t *testing.T) {
 		w.Write(output)
 	}))
 	defer server.Close()
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 
 	groupVersions, err := client.ApiGroupVersions(context.TODO())
 	if err != nil {
@@ -365,7 +364,7 @@ func TestGetServerResourcesForGroupVersion(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, test := range tests {
-		client := discoveryClient(t, &restclient.Config{Host: server.URL})
+		client := discoveryClient(t, &rest.Config{Host: server.URL})
 		got, err := client.ApiResources(context.TODO(), test.request)
 		if test.expectErr {
 			if err == nil {
@@ -382,7 +381,7 @@ func TestGetServerResourcesForGroupVersion(t *testing.T) {
 		}
 	}
 
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 	start := time.Now()
 
 	serverGroups, err := client.ApiGroupVersions(context.TODO())
@@ -567,7 +566,7 @@ func TestGetOpenAPISchema(t *testing.T) {
 	}
 	defer server.Close()
 
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 	gvk := schema.GroupVersionKind{Group: "fake", Version: "2", Kind: "Type"}
 	got, err := client.OpenApiSchema(context.TODO(), gvk)
 	if err != nil {
@@ -585,7 +584,7 @@ func TestGetOpenAPISchemaV3(t *testing.T) {
 	}
 	defer server.Close()
 
-	client := discoveryClient(t, &restclient.Config{Host: server.URL})
+	client := discoveryClient(t, &rest.Config{Host: server.URL})
 	gvk := schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "CronJob"}
 	got, err := client.OpenApiSchema(context.TODO(), gvk)
 	if err != nil {
@@ -711,7 +710,7 @@ func TestServerPreferredResources(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(test.response))
 		defer server.Close()
 
-		client := discoveryClient(t, &restclient.Config{Host: server.URL})
+		client := discoveryClient(t, &rest.Config{Host: server.URL})
 
 		resources, err := PreferredServerResources(context.TODO(), client)
 
@@ -825,7 +824,7 @@ func TestServerPreferredResourcesRetries(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(response(tc.responseErrors)))
 		defer server.Close()
 
-		client := discoveryClient(t, &restclient.Config{Host: server.URL})
+		client := discoveryClient(t, &rest.Config{Host: server.URL})
 		resources, err := PreferredServerResources(context.TODO(), client)
 		if !tc.expectedError(err) {
 			t.Errorf("case %d: unexpected error: %v", i, err)
@@ -993,7 +992,7 @@ func TestServerPreferredNamespacedResources(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(test.response))
 		defer server.Close()
 
-		client := discoveryClient(t, &restclient.Config{Host: server.URL})
+		client := discoveryClient(t, &rest.Config{Host: server.URL})
 		resources, err := PreferredServerResources(context.TODO(), client)
 		if err != nil {
 			t.Errorf("[%d] unexpected error: %v", i, err)

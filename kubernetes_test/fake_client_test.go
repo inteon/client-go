@@ -18,6 +18,7 @@ package kubernetes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,7 +27,20 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 )
+
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	return kubeScheme
+}
+
+func newNegotiator(t testing.TB) rest.SerializerNegotiator {
+	return rest.NewSerializerNegotiator(newKubeScheme(t), false)
+}
 
 // This test proves that the kube fake client does not return GVKs.  This is consistent with actual client (see tests below)
 // and should not be changed unless the decoding behavior and somehow literal creation (`&corev1.ConfigMap{}`) behavior change.
@@ -36,27 +50,28 @@ func Test_ConfigMapFakeClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cm.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{}) {
+	if cm.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}) {
 		t.Fatal(cm.GetObjectKind().GroupVersionKind())
 	}
 	cmList, err := fakeKubeClient.CoreV1().ConfigMaps("foo-ns").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cmList.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{}) {
+	if cmList.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{Version: "v1", Kind: "ConfigMapList"}) {
 		t.Fatal(cmList.GetObjectKind().GroupVersionKind())
 	}
 }
 
 // This test checks decoding behavior for the actual client to ensure the fake client (tested above) is consistent.
 func TestGetDecoding(t *testing.T) {
+	negotiator := newNegotiator(t)
+
 	// this the duplication of logic from the real Get API for configmaps.  This will prove that the generated client will not return a GVK
-	mediaTypes := scheme.Codecs.WithoutConversion().SupportedMediaTypes()
-	info, ok := runtime.SerializerInfoForMediaType(mediaTypes, "application/json")
-	if !ok {
-		t.Fatal("missing serializer")
+	decoder, err := negotiator.Decoder(string(rest.JsonMediaType), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	decoder := scheme.Codecs.WithoutConversion().DecoderToVersion(info.Serializer, corev1.SchemeGroupVersion)
+	//	decoder := scheme.Codecs.WithoutConversion().DecoderToVersion(info.Serializer, corev1.SchemeGroupVersion)
 
 	body := []byte(`{"apiVersion": "v1", "kind": "ConfigMap", "metadata":{"Namespace":"foo","Name":"bar"}}`)
 	obj := &corev1.ConfigMap{}
@@ -65,20 +80,22 @@ func TestGetDecoding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if obj.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{}) {
+	if obj.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}) {
 		t.Fatal(obj.GetObjectKind().GroupVersionKind())
 	}
 }
 
 // This test checks decoding behavior for the actual client to ensure the fake client (tested above) is consistent.
 func TestListDecoding(t *testing.T) {
+	negotiator := newNegotiator(t)
+
 	// this the duplication of logic from the real Get API for configmaps.  This will prove that the generated client will not return a GVK
-	mediaTypes := scheme.Codecs.WithoutConversion().SupportedMediaTypes()
-	info, ok := runtime.SerializerInfoForMediaType(mediaTypes, "application/json")
-	if !ok {
-		t.Fatal("missing serializer")
+	mediaTypes := negotiator.AcceptContentTypes(schema.GroupVersionKind{Version: "v1", Kind: "Configmap"})
+	mediaType, _, _ := strings.Cut(mediaTypes, ",")
+	decoder, err := negotiator.Decoder(mediaType, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	decoder := scheme.Codecs.WithoutConversion().DecoderToVersion(info.Serializer, corev1.SchemeGroupVersion)
 
 	body := []byte(`{"apiVersion": "v1", "kind": "ConfigMapList", "items":[]}`)
 	obj := &corev1.ConfigMapList{}
@@ -87,7 +104,7 @@ func TestListDecoding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if obj.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{}) {
+	if obj.GetObjectKind().GroupVersionKind() != (schema.GroupVersionKind{Version: "v1", Kind: "ConfigMapList"}) {
 		t.Fatal(obj.GetObjectKind().GroupVersionKind())
 	}
 }

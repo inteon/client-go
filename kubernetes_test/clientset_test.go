@@ -22,12 +22,25 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	v1 "k8s.io/api/core/v1"
+	http_client "github.com/go418/http-client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
+
+func newKubeScheme(t testing.TB) *runtime.Scheme {
+	kubeScheme := runtime.NewScheme()
+	if err := scheme.AddToScheme(kubeScheme); err != nil {
+		t.Fatal(err)
+	}
+	return kubeScheme
+}
+
+func newNegotiator(t testing.TB) rest.SerializerNegotiator {
+	return rest.NewSerializerNegotiator(newKubeScheme(t), false)
+}
 
 func TestClientUserAgent(t *testing.T) {
 	tests := []struct {
@@ -61,19 +74,17 @@ func TestClientUserAgent(t *testing.T) {
 			ts.Start()
 			defer ts.Close()
 
-			gv := v1.SchemeGroupVersion
-			config := &rest.Config{
-				Host: ts.URL,
-			}
-			config.GroupVersion = &gv
-			config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
-			config.UserAgent = tc.userAgent
-			config.ContentType = "application/json"
-
-			client, err := kubernetes.NewForConfig(config)
+			restClient, err := rest.Config{
+				Host:       ts.URL,
+				Negotiator: newNegotiator(t),
+			}.Build(
+				http_client.UserAgent(tc.userAgent),
+			)
 			if err != nil {
 				t.Fatalf("failed to create REST client: %v", err)
 			}
+			client := kubernetes.New(restClient)
+
 			_, err = client.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
 			if err != nil {
 				t.Error(err)

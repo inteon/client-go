@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	http_client "github.com/go418/http-client"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -114,14 +115,16 @@ func TestReconnectBrokenTCP(t *testing.T) {
 	if !ok {
 		t.Fatalf("failed to assert *http.Transport")
 	}
-	config := &Config{
-		Host:      "https://" + lb.ln.Addr().String(),
-		Transport: utilnet.SetTransportDefaults(transport),
-		Timeout:   1 * time.Second,
+	client, err := Config{
+		Host: "https://" + lb.ln.Addr().String(),
 		// These fields are required to create a REST client.
 		Negotiator: newNegotiator(t),
-	}
-	client, err := RESTClientFor(config)
+	}.BuildManual(
+		http_client.ManualCloneRequest(),
+		http_client.Timeout(1*time.Second),
+		http_client.ManualDefaultClient(),
+		http_client.ManualTransport(utilnet.SetTransportDefaults(transport)),
+	)
 	if err != nil {
 		t.Fatalf("failed to create REST client: %v", err)
 	}
@@ -186,16 +189,18 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to assert *http.Transport")
 	}
-	config := &Config{
-		Host:      "https://" + lb.ln.Addr().String(),
-		Transport: utilnet.SetTransportDefaults(transport),
-		// large timeout, otherwise the broken connection will be cleaned by it
-		Timeout: wait.ForeverTestTimeout,
+	client, err := Config{
+		Host: "https://" + lb.ln.Addr().String(),
 		// These fields are required to create a REST client.
 		Negotiator: newNegotiator(t),
-	}
-	config.TLSClientConfig.NextProtos = []string{"http/1.1"}
-	client, err := RESTClientFor(config)
+	}.BuildManual(
+		http_client.ManualCloneRequest(),
+		// large timeout, otherwise the broken connection will be cleaned by it
+		http_client.Timeout(wait.ForeverTestTimeout),
+		http_client.DisableHttp2(),
+		http_client.ManualDefaultClient(),
+		http_client.ManualTransport(utilnet.SetTransportDefaults(transport)),
+	)
 	if err != nil {
 		t.Fatalf("failed to create REST client: %v", err)
 	}
@@ -217,7 +222,7 @@ func TestReconnectBrokenTCP_HTTP1(t *testing.T) {
 	defer cancel()
 	go lb.serve(ctx)
 	// Close the idle connections
-	utilnet.CloseIdleConnectionsFor(client.Client.Transport)
+	utilnet.CloseIdleConnectionsFor(client.Client.(*http.Client).Transport)
 
 	// If the client didn't close the idle connections, the broken connection
 	// would still be in the connection pool, the following request would
@@ -275,17 +280,18 @@ func TestReconnectBrokenTCPInFlight_HTTP1(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to assert *http.Transport")
 	}
-	config := &Config{
-		Host:      "https://" + lb.ln.Addr().String(),
-		Transport: utilnet.SetTransportDefaults(transport),
-		// Use something extraordinary large to not hit the timeout
-		Timeout: wait.ForeverTestTimeout,
+	client, err := Config{
+		Host: "https://" + lb.ln.Addr().String(),
 		// These fields are required to create a REST client.
 		Negotiator: newNegotiator(t),
-	}
-	config.TLSClientConfig.NextProtos = []string{"http/1.1"}
-
-	client, err := RESTClientFor(config)
+	}.BuildManual(
+		http_client.ManualCloneRequest(),
+		// large timeout, otherwise the broken connection will be cleaned by it
+		http_client.Timeout(wait.ForeverTestTimeout),
+		http_client.DisableHttp2(),
+		http_client.ManualDefaultClient(),
+		http_client.ManualTransport(utilnet.SetTransportDefaults(transport)),
+	)
 	if err != nil {
 		t.Fatalf("failed to create REST client: %v", err)
 	}
@@ -350,13 +356,13 @@ func TestRestClientTimeout(t *testing.T) {
 	ts.Start()
 	defer ts.Close()
 
-	config := &Config{
-		Host:    ts.URL,
-		Timeout: 1 * time.Second,
+	client, err := Config{
+		Host: ts.URL,
 		// These fields are required to create a REST client.
 		Negotiator: newNegotiator(t),
-	}
-	client, err := RESTClientFor(config)
+	}.Build(
+		http_client.Timeout(1 * time.Second),
+	)
 	if err != nil {
 		t.Fatalf("failed to create REST client: %v", err)
 	}
